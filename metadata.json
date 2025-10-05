@@ -1,0 +1,5 @@
+{
+  "name": "Trình tạo truyện tranh AI",
+  "description": "Một ứng dụng web để tạo truyện tranh và video ngắn từ văn bản bằng cách sử dụng AI. Người dùng có thể tạo nhân vật, phân chia câu chuyện thành các cảnh, tạo hình ảnh cho từng cảnh và kết hợp chúng với âm thanh để tạo thành một video hoàn chỉnh.",
+  "requestFramePermissions": []
+}
