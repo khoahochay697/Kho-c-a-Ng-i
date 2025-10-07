@@ -100,7 +100,7 @@ export const generateSceneImage = async (apiKey: string, referenceImages: string
 export const splitStoryIntoScenes = async (apiKey: string, story: string, numScenes?: number): Promise<string[]> => {
     try {
         const ai = getAiClient(apiKey);
-        const prompt = `Hãy đọc câu chuyện sau. Chia nó thành ${numScenes ? numScenes : 'vài'} cảnh để vẽ truyện tranh. Với mỗi cảnh, hãy viết một mô tả **trực quan** ngắn gọn, tập trung vào hành động, nhân vật và bối cảnh. **Không** trích dẫn trực tiếp từ câu chuyện. Trả về kết quả dưới dạng một mảng JSON các chuỗi. \n\nVí dụ: ["Một chàng trai tóc xanh đang đứng trên đỉnh đồi, nhìn về phía hoàng hôn.", "Chàng trai đó đang chiến đấu với một con rồng lửa trong một hang động tối."]\n\nCâu chuyện: "${story}"`;
+        const prompt = `Nhiệm vụ của bạn là hoạt động như một công cụ phân cảnh cho họa sĩ truyện tranh. Đọc câu chuyện được cung cấp và chia nó thành ${numScenes ? numScenes : 'vài'} cảnh chính. Đối với MỖI cảnh, hãy tạo một mô tả **chỉ để vẽ**, không phải là văn bản tường thuật. Mô tả này phải ngắn gọn, tập trung vào các yếu tố HÌNH ẢNH: hành động, biểu cảm của nhân vật, và bối cảnh xung quanh. TUYỆT ĐỐI KHÔNG sao chép hoặc diễn giải lại các câu từ câu chuyện gốc. Chỉ trả về một mảng JSON hợp lệ chứa các chuỗi mô tả này. \n\nVí dụ đầu ra đúng: ["Cô bé quàng khăn đỏ đang đi bộ trên con đường mòn trong một khu rừng rậm rạp.", "Một con sói gian ác đang nấp sau một cái cây, nhìn cô bé.", "Cô bé gõ cửa một ngôi nhà nhỏ bằng gỗ."]\n\nCâu chuyện: "${story}"`;
         
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
