@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { generateImageFromText } from '../services/geminiService';
-import { fileToBase64, markApiKeyAsInvalid } from '../services/utils';
+import { fileToBase64, markApiKeyAsInvalid, parseGeminiError } from '../services/utils';
 import { Spinner } from './Spinner';
 import { UploadIcon, MagicIcon, NextIcon } from './icons';
 
@@ -43,13 +43,11 @@ export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceI
             const imageBytes = await generateImageFromText(apiKey, `A full-body character reference sheet for a comic book character. Description: ${characterPrompt}. Style: clean lines, simple colors, white background.`);
             setGeneratedImage(imageBytes);
         } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            if (apiKey && (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied'))) {
+            const friendlyError = parseGeminiError(err);
+            if (apiKey && friendlyError.toLowerCase().includes('api key')) {
                  markApiKeyAsInvalid(apiKey);
-                 setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1 và thử lại.");
-            } else {
-                setError("Tạo nhân vật thất bại. Vui lòng thử lại.");
             }
+            setError(friendlyError);
             console.error(err);
         } finally {
             setIsLoading(false);

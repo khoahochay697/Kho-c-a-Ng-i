@@ -66,3 +66,20 @@ export const clearApiKeyStatus = (keyValue: string) => {
         console.error("Failed to clear API key status in storage:", error);
     }
 }
+
+export const parseGeminiError = (error: unknown): string => {
+    if (error instanceof Error) {
+        const message = error.message;
+        // Check for quota/rate limit errors
+        if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('quota')) {
+            return "Bạn đã vượt quá hạn ngạch API (lỗi 429). Điều này thường xảy ra khi dùng hết số lượt yêu cầu miễn phí. Vui lòng đợi một lát rồi thử lại, hoặc sử dụng một API Key khác.";
+        }
+        // Check for invalid API key errors
+        if (message.toLowerCase().includes('api key') || message.includes('403') || message.includes('permission denied')) {
+            return "API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1 và thử lại.";
+        }
+        // Return the original message for other errors, as it might be descriptive.
+        return message;
+    }
+    return "Đã xảy ra một lỗi không xác định.";
+};

@@ -3,7 +3,7 @@
 import React, { useState, useRef } from 'react';
 import type { Scene, ComicImage } from '../types';
 import { splitStoryIntoScenes, generateSceneImage, editImageWithPrompt } from '../services/geminiService';
-import { fileToBase64, markApiKeyAsInvalid } from '../services/utils';
+import { fileToBase64, markApiKeyAsInvalid, parseGeminiError } from '../services/utils';
 import { Spinner } from './Spinner';
 import { Modal } from './Modal';
 import { NextIcon, MagicIcon, UploadIcon, EditIcon, TrashIcon, RetryIcon, ZoomInIcon } from './icons';
@@ -53,13 +53,11 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
             }));
             setScenes(newScenes);
         } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            if (apiKey && (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied'))) {
-                 markApiKeyAsInvalid(apiKey);
-                 setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1 và thử lại.");
-            } else {
-                setError(errorMessage);
+            const friendlyError = parseGeminiError(err);
+            if (apiKey && friendlyError.toLowerCase().includes('api key')) {
+                markApiKeyAsInvalid(apiKey);
             }
+            setError(friendlyError);
         } finally {
             setIsSplitting(false);
         }
@@ -97,13 +95,11 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
             const newImageBase64 = await generateSceneImage(apiKey, referenceImages, prompt);
             updateImageStatus(scene.id, image.id, 'done', newImageBase64);
         } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-             if (apiKey && (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied'))) {
+            const friendlyError = parseGeminiError(err);
+             if (apiKey && friendlyError.toLowerCase().includes('api key')) {
                 markApiKeyAsInvalid(apiKey);
-                setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1.");
-            } else {
-                 setError(errorMessage);
             }
+            setError(friendlyError);
             updateImageStatus(scene.id, image.id, 'error');
         }
     };
@@ -229,13 +225,11 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
             }));
             setEditingImage(null);
         } catch (error: unknown) {
-             const errorMessage = error instanceof Error ? error.message : String(error);
-             if (apiKey && (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied'))) {
+            const friendlyError = parseGeminiError(error);
+             if (apiKey && friendlyError.toLowerCase().includes('api key')) {
                 markApiKeyAsInvalid(apiKey);
-                setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1.");
-            } else {
-                setError("Chỉnh sửa ảnh thất bại.");
             }
+            setError(friendlyError);
         } finally {
             setIsEditing(false);
         }
