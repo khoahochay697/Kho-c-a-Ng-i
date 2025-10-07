@@ -43,6 +43,12 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
                 id: `scene-${Date.now()}-${i}`,
                 description: desc,
                 images: [],
+                backgroundMusicFile: null,
+                backgroundMusicUrl: null,
+                backgroundMusicVolume: 0.2,
+                backgroundMusicTrimStart: 0,
+                backgroundMusicTrimEnd: null,
+                backgroundMusicDuration: 0,
             }));
             setScenes(newScenes);
         } catch (err: unknown) {

@@ -10,6 +10,12 @@ export interface Scene {
     id: string;
     description: string;
     images: ComicImage[];
+    backgroundMusicFile?: File | null;
+    backgroundMusicUrl?: string | null;
+    backgroundMusicVolume?: number;
+    backgroundMusicTrimStart?: number;
+    backgroundMusicTrimEnd?: number | null;
+    backgroundMusicDuration?: number;
 }
 
 export interface SavedApiKey {

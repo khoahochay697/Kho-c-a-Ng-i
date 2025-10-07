@@ -11,6 +11,7 @@ export interface VideoConfig {
     audioUrl: string | null;
     trimStart: number;
     trimEnd: number | null;
+    audioVolume: number;
 }
 
 const App: React.FC = () => {
@@ -23,6 +24,7 @@ const App: React.FC = () => {
         audioUrl: null,
         trimStart: 0,
         trimEnd: null,
+        audioVolume: 1,
     });
 
     const handleKeySelection = (selectedKey: string | null) => {
@@ -77,7 +79,7 @@ const App: React.FC = () => {
 
                         {unlockedStep >= 4 && (
                             <div className="bg-slate-800/50 rounded-2xl shadow-2xl p-6 md:p-10 border border-slate-700">
-                                <VideoStep scenes={scenes} setScenes={setScenes} videoConfig={videoConfig} setVideoConfig={setVideoConfig} />
+                                <VideoStep apiKey={apiKey} scenes={scenes} setScenes={setScenes} videoConfig={videoConfig} setVideoConfig={setVideoConfig} />
                             </div>
                         )}
                     </div>
