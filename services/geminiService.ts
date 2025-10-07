@@ -126,14 +126,8 @@ export const splitStoryIntoScenes = async (apiKey: string, story: string, numSce
 
     } catch (error) {
         console.error("Lỗi khi phân chia cảnh:", error);
-        // Fallback to simple split if AI fails
-        const sentences = story.match(/[^.!?]+[.!?]+/g) || [];
-        const desiredScenes = numScenes || Math.max(1, Math.ceil(sentences.length / 3));
-        const scenes: string[] = [];
-        const sentencesPerScene = Math.ceil(sentences.length / desiredScenes);
-        for (let i = 0; i < sentences.length; i += sentencesPerScene) {
-            scenes.push(sentences.slice(i, i + sentencesPerScene).join(' ').trim());
-        }
-        return scenes.filter(s => s.length > 0);
+        // Throw the original error instead of falling back to a simple split.
+        // This allows the UI to catch it and display a proper error message (e.g., about an invalid API key).
+        throw error;
     }
 };
