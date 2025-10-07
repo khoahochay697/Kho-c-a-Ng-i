@@ -100,7 +100,7 @@ export const generateSceneImage = async (apiKey: string, referenceImages: string
 export const splitStoryIntoScenes = async (apiKey: string, story: string, numScenes?: number): Promise<string[]> => {
     try {
         const ai = getAiClient(apiKey);
-        const prompt = `Phân tích câu chuyện sau đây và chia nó thành ${numScenes ? numScenes : 'một vài'} cảnh riêng biệt, hợp lý để vẽ truyện tranh. Mỗi cảnh nên mô tả một hành động hoặc một khoảnh khắc quan trọng. Chỉ trả về một mảng JSON chứa các chuỗi mô tả cho mỗi cảnh. Ví dụ: ["Cảnh 1 mô tả...", "Cảnh 2 mô tả..."].\n\nCâu chuyện: "${story}"`;
+        const prompt = `Hãy đọc câu chuyện sau. Chia nó thành ${numScenes ? numScenes : 'vài'} cảnh để vẽ truyện tranh. Với mỗi cảnh, hãy viết một mô tả **trực quan** ngắn gọn, tập trung vào hành động, nhân vật và bối cảnh. **Không** trích dẫn trực tiếp từ câu chuyện. Trả về kết quả dưới dạng một mảng JSON các chuỗi. \n\nVí dụ: ["Một chàng trai tóc xanh đang đứng trên đỉnh đồi, nhìn về phía hoàng hôn.", "Chàng trai đó đang chiến đấu với một con rồng lửa trong một hang động tối."]\n\nCâu chuyện: "${story}"`;
         
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
@@ -111,7 +111,7 @@ export const splitStoryIntoScenes = async (apiKey: string, story: string, numSce
                     type: Type.ARRAY,
                     items: {
                         type: Type.STRING,
-                        description: "Mô tả chi tiết cho một cảnh truyện."
+                        description: "Mô tả trực quan của một cảnh để vẽ."
                     }
                 }
             }
