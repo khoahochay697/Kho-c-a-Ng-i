@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import type { Scene } from '../types';
 import type { VideoConfig } from '../App';
 import { UploadIcon, PlayIcon, DownloadIcon, EditIcon, PauseIcon, RewindIcon, MagicIcon } from './icons';
@@ -414,6 +414,52 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
     const [audioPreviewTime, setAudioPreviewTime] = useState(0);
     const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
     
+    const containerRef = useRef<HTMLDivElement>(null);
+    const leftPanelRef = useRef<HTMLDivElement>(null);
+    const isResizing = useRef(false);
+
+    const handleMouseDownOnResizer = useCallback((e: React.MouseEvent) => {
+        isResizing.current = true;
+        e.preventDefault();
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        if (leftPanelRef.current) {
+            leftPanelRef.current.style.pointerEvents = 'none';
+        }
+
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+            if (isResizing.current && containerRef.current && leftPanelRef.current) {
+                const containerRect = containerRef.current.getBoundingClientRect();
+                let newLeftWidth = moveEvent.clientX - containerRect.left;
+
+                const minWidth = containerRect.width * 0.3;
+                const maxWidth = containerRect.width * 0.7;
+
+                if (newLeftWidth < minWidth) newLeftWidth = minWidth;
+                if (newLeftWidth > maxWidth) newLeftWidth = maxWidth;
+
+                leftPanelRef.current.style.width = `${newLeftWidth}px`;
+                leftPanelRef.current.style.flexShrink = '0';
+            }
+        };
+
+        const handleMouseUp = () => {
+            isResizing.current = false;
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+            document.body.style.cursor = 'default';
+            document.body.style.userSelect = 'auto';
+
+            if (leftPanelRef.current) {
+                leftPanelRef.current.style.pointerEvents = 'auto';
+            }
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    }, []);
+
     const speedOptions = [0.75, 0.8, 0.85, 0.9, 0.95, 1, 1.25, 1.5, 1.75, 2];
     const canCreateVideo = scenes.flatMap(s => s.images.filter(img => img.status === 'done' && img.isSelected)).length > 0;
 
@@ -859,8 +905,8 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 </div>
             ) : (
                 <>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-2 space-y-6">
+                <div ref={containerRef} className="flex flex-col lg:flex-row gap-4 items-stretch">
+                    <div ref={leftPanelRef} className="lg:w-2/3 flex-shrink-0 space-y-6">
                         <div className="bg-slate-900/50 p-6 rounded-lg border border-slate-700">
                             <h3 className="text-xl font-semibold mb-4">1. Âm thanh & Tốc độ</h3>
                             
@@ -970,8 +1016,16 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                             </div>
                         </div>
                     </div>
+                    
+                    <div
+                        onMouseDown={handleMouseDownOnResizer}
+                        className="hidden lg:flex w-2.5 flex-shrink-0 items-center justify-center cursor-col-resize group"
+                        title="Kéo để thay đổi kích thước"
+                    >
+                        <div className="w-1 h-16 bg-slate-600 group-hover:bg-primary-500 rounded-full transition-colors"></div>
+                    </div>
 
-                    <div className="lg:col-span-1">
+                    <div className="flex-grow flex flex-col min-w-0">
                         <VideoPlayer 
                             scenes={scenes} 
                             audioUrl={videoConfig.audioUrl} 
