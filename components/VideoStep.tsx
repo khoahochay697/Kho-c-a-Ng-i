@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import type { Scene } from '../types';
 import type { VideoConfig } from '../App';
@@ -473,7 +474,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 interface VideoStepProps {
     apiKey: string | null;
     scenes: Scene[];
-    setScenes: (scenes: Scene[]) => void;
+    // FIX: Correctly type `setScenes` to accept a functional update.
+    setScenes: React.Dispatch<React.SetStateAction<Scene[]>>;
     videoConfig: VideoConfig;
     setVideoConfig: (config: VideoConfig) => void;
 }
