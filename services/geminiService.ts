@@ -85,11 +85,21 @@ export const generateSceneImage = async (apiKey: string, referenceImages: string
             },
         });
 
-        const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+        if (!response.candidates || response.candidates.length === 0) {
+            throw new Error("AI không trả về kết quả nào. Điều này có thể do bộ lọc an toàn đã chặn nội dung hoặc ảnh tham chiếu của bạn. Vui lòng thử lại với mô tả khác.");
+        }
+
+        const imagePart = response.candidates[0].content?.parts?.find(part => part.inlineData);
         if (imagePart && imagePart.inlineData) {
             return imagePart.inlineData.data;
         }
-        throw new Error("Không thể tạo ảnh cho cảnh.");
+
+        const textResponse = response.candidates[0].content?.parts?.find(part => part.text)?.text;
+        if (textResponse) {
+             throw new Error(`AI đã trả về văn bản thay vì ảnh. Thử thay đổi mô tả của bạn. Phản hồi của AI: "${textResponse}"`);
+        }
+        
+        throw new Error("Không thể tạo ảnh cho cảnh. Phản hồi từ AI không chứa dữ liệu hình ảnh như mong đợi.");
 
     } catch (error) {
         console.error("Lỗi khi tạo ảnh cảnh:", error);

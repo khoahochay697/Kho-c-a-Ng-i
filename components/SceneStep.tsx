@@ -1,4 +1,5 @@
 
+
 import React, { useState, useRef } from 'react';
 import type { Scene, ComicImage } from '../types';
 import { splitStoryIntoScenes, generateSceneImage, editImageWithPrompt } from '../services/geminiService';
@@ -97,11 +98,11 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
             updateImageStatus(scene.id, image.id, 'done', newImageBase64);
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
-             if (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied')) {
+             if (apiKey && (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied'))) {
                 markApiKeyAsInvalid(apiKey);
                 setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1.");
             } else {
-                 setError(`Tạo ảnh cho cảnh "${scene.description.substring(0, 20)}..." thất bại.`);
+                 setError(errorMessage);
             }
             updateImageStatus(scene.id, image.id, 'error');
         }
