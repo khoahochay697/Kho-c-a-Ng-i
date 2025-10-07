@@ -352,9 +352,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     return (
-        <div className={`p-4 bg-slate-950 rounded-lg h-full flex flex-col`}>
+        <div className={`p-4 bg-slate-950 rounded-lg`}>
             <h4 className="text-lg font-semibold mb-3 text-center">Xem trước Video</h4>
-            <div className={`relative aspect-video bg-black rounded-md flex items-center justify-center mb-4 flex-grow overflow-hidden`}>
+            <div className={`relative aspect-video bg-black rounded-md flex items-center justify-center mb-4 overflow-hidden`}>
                 {imageBuffer[0] && <img src={`data:image/png;base64,${imageBuffer[0]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 0 ? 'opacity-100' : 'opacity-0'}`} alt="preview-0" />}
                 {imageBuffer[1] && <img src={`data:image/png;base64,${imageBuffer[1]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 1 ? 'opacity-100' : 'opacity-0'}`} alt="preview-1" />}
                 {!imageBuffer[0] && !imageBuffer[1] && <p className="text-slate-500">Bắt đầu xem trước</p>}
@@ -1034,13 +1034,12 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                             playbackRate={playbackRate}
                             audioVolume={videoConfig.audioVolume}
                          />
+                        <div className="text-center mt-6">
+                            <button onClick={handleCreateVideo} disabled={!canCreateVideo} className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-10 rounded-lg text-xl transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed">
+                               <DownloadIcon className="w-6 h-6 inline-block mr-2"/> Tạo & Tải Video
+                            </button>
+                        </div>
                     </div>
-                </div>
-
-                <div className="text-center mt-8">
-                    <button onClick={handleCreateVideo} disabled={!canCreateVideo} className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-10 rounded-lg text-xl transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed">
-                       <DownloadIcon className="w-6 h-6 inline-block mr-2"/> Tạo & Tải Video
-                    </button>
                 </div>
                 </>
             )}
