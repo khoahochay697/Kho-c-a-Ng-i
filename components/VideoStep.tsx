@@ -165,6 +165,62 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const backgroundMusicAudioRef = useRef<HTMLAudioElement>(null);
     const lastPlayedMusicUrl = useRef<string | null>(null);
     const intervalRef = useRef<number | null>(null);
+    
+    const videoPreviewContainerRef = useRef<HTMLDivElement>(null);
+    const isResizingRef = useRef<false | 'top' | 'bottom'>(false);
+    const [previewHeight, setPreviewHeight] = useState<number | null>(null);
+
+    useEffect(() => {
+        const checkSize = () => {
+             if (videoPreviewContainerRef.current && previewHeight === null) {
+                const width = videoPreviewContainerRef.current.offsetWidth;
+                if (width > 0) {
+                    setPreviewHeight(width * 9 / 16);
+                }
+            }
+        };
+        checkSize();
+        // Also listen to window resize to handle responsive changes
+        window.addEventListener('resize', checkSize);
+        return () => window.removeEventListener('resize', checkSize);
+    }, [previewHeight]);
+
+    const handleMouseDownOnResizer = useCallback((e: React.MouseEvent, position: 'top' | 'bottom') => {
+        e.preventDefault();
+        isResizingRef.current = position;
+        document.body.style.cursor = 'ns-resize';
+        document.body.style.userSelect = 'none';
+
+        const startY = e.clientY;
+        const startHeight = videoPreviewContainerRef.current?.offsetHeight ?? 0;
+
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+            if (!isResizingRef.current || !videoPreviewContainerRef.current) return;
+
+            const dy = moveEvent.clientY - startY;
+            let newHeight;
+            if (isResizingRef.current === 'top') {
+                newHeight = startHeight - dy;
+            } else { // 'bottom'
+                newHeight = startHeight + dy;
+            }
+
+            if (newHeight > 150 && newHeight < 1000) { // Set some constraints
+                setPreviewHeight(newHeight);
+            }
+        };
+
+        const handleMouseUp = () => {
+            isResizingRef.current = false;
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+            document.body.style.cursor = 'default';
+            document.body.style.userSelect = 'auto';
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    }, []);
 
     const { imageTimeline, sceneStartTimes, totalDuration } = useMemo(() => {
         const timeline: ImageTimelineEntry[] = [];
@@ -354,14 +410,36 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return (
         <div className={`p-4 bg-slate-950 rounded-lg`}>
             <h4 className="text-lg font-semibold mb-3 text-center">Xem trước Video</h4>
-            <div className={`relative aspect-video bg-black rounded-md flex items-center justify-center mb-4 overflow-hidden`}>
+            
+            <div 
+                onMouseDown={(e) => handleMouseDownOnResizer(e, 'top')}
+                className="w-full h-2.5 cursor-ns-resize flex justify-center items-center group mb-1"
+                title="Kéo để thay đổi kích thước"
+            >
+                <div className="w-12 h-1 bg-slate-600 group-hover:bg-primary-500 rounded-full transition-colors"></div>
+            </div>
+
+            <div 
+                ref={videoPreviewContainerRef}
+                style={previewHeight ? { height: `${previewHeight}px` } : {}}
+                className={`relative bg-black rounded-md flex items-center justify-center overflow-hidden ${!previewHeight ? 'aspect-video' : ''}`}
+            >
                 {imageBuffer[0] && <img src={`data:image/png;base64,${imageBuffer[0]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 0 ? 'opacity-100' : 'opacity-0'}`} alt="preview-0" />}
                 {imageBuffer[1] && <img src={`data:image/png;base64,${imageBuffer[1]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 1 ? 'opacity-100' : 'opacity-0'}`} alt="preview-1" />}
                 {!imageBuffer[0] && !imageBuffer[1] && <p className="text-slate-500">Bắt đầu xem trước</p>}
             </div>
+            
+             <div 
+                onMouseDown={(e) => handleMouseDownOnResizer(e, 'bottom')}
+                className="w-full h-2.5 cursor-ns-resize flex justify-center items-center group mt-1"
+                title="Kéo để thay đổi kích thước"
+            >
+                <div className="w-12 h-1 bg-slate-600 group-hover:bg-primary-500 rounded-full transition-colors"></div>
+            </div>
+
              {audioUrl && <audio ref={audioRef} src={audioUrl} className="hidden" preload="auto" />}
              <audio ref={backgroundMusicAudioRef} className="hidden" preload="auto" />
-            <div className="flex justify-center items-center gap-4">
+            <div className="flex justify-center items-center gap-4 mt-2">
                  <button onClick={handleRestart} disabled={!audioUrl} title="Tua lại" className="bg-slate-600 hover:bg-slate-500 text-white font-bold p-3 rounded-full flex items-center justify-center disabled:bg-slate-700 disabled:text-slate-500 transition-colors">
                     <RewindIcon className="w-5 h-5"/>
                 </button>
