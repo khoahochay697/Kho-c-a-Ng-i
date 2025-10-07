@@ -118,16 +118,25 @@ export const splitStoryIntoScenes = async (apiKey: string, story: string, numSce
         });
         
         const jsonString = response.text.trim();
-        const scenes = JSON.parse(jsonString);
-        if (Array.isArray(scenes) && scenes.every(s => typeof s === 'string')) {
-            return scenes;
+
+        if (!jsonString) {
+            throw new Error("AI đã trả về một phản hồi trống. Điều này có thể do nội dung truyện của bạn đã bị bộ lọc an toàn chặn. Vui lòng thử điều chỉnh lại câu chuyện.");
         }
-        throw new Error("Phản hồi từ AI không đúng định dạng mảng chuỗi.");
+
+        try {
+            const scenes = JSON.parse(jsonString);
+            if (Array.isArray(scenes) && scenes.every(s => typeof s === 'string')) {
+                return scenes;
+            }
+        } catch (jsonError) {
+             console.error("Lỗi khi phân tích JSON từ AI:", jsonString);
+             throw new Error("AI đã không trả về định dạng JSON hợp lệ như mong đợi. Vui lòng thử lại.");
+        }
+        
+        throw new Error("Phản hồi từ AI không đúng định dạng mảng chuỗi mong muốn.");
 
     } catch (error) {
         console.error("Lỗi khi phân chia cảnh:", error);
-        // Throw the original error instead of falling back to a simple split.
-        // This allows the UI to catch it and display a proper error message (e.g., about an invalid API key).
         throw error;
     }
 };

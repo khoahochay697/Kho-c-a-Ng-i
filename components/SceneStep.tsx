@@ -55,9 +55,9 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
             const errorMessage = err instanceof Error ? err.message : String(err);
             if (apiKey && (errorMessage.toLowerCase().includes('api key') || errorMessage.includes('403') || errorMessage.includes('permission denied'))) {
                  markApiKeyAsInvalid(apiKey);
-                 setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1.");
+                 setError("API Key không hợp lệ hoặc đã hết hạn. Vui lòng chọn một key khác ở Bước 1 và thử lại.");
             } else {
-                setError("Phân chia cảnh thất bại. Vui lòng thử lại.");
+                setError(errorMessage);
             }
         } finally {
             setIsSplitting(false);
