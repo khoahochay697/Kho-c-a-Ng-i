@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import type { Scene } from '../types';
 import type { VideoConfig } from '../App';
-import { UploadIcon, PlayIcon, DownloadIcon, EditIcon, PauseIcon, RewindIcon, MagicIcon } from './icons';
+import { UploadIcon, PlayIcon, DownloadIcon, EditIcon, PauseIcon, RewindIcon, MagicIcon, MoveIcon } from './icons';
 
 interface ImageTimelineEntry {
     url: string;
@@ -170,6 +170,42 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const videoPreviewContainerRef = useRef<HTMLDivElement>(null);
     const isResizingRef = useRef<false | 'top' | 'bottom'>(false);
     const [previewHeight, setPreviewHeight] = useState<number | null>(null);
+
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const dragOffset = useRef({ x: 0, y: 0 });
+
+    const handlePlayerDragStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('button, input, select, a, .cursor-ns-resize, .cursor-pointer')) {
+            return;
+        }
+        e.preventDefault();
+        setIsDragging(true);
+
+        dragOffset.current = {
+            x: e.clientX - position.x,
+            y: e.clientY - position.y,
+        };
+
+        const handlePlayerDragMove = (moveEvent: MouseEvent) => {
+            setPosition({
+                x: moveEvent.clientX - dragOffset.current.x,
+                y: moveEvent.clientY - dragOffset.current.y,
+            });
+        };
+
+        const handlePlayerDragEnd = () => {
+            setIsDragging(false);
+            document.body.style.userSelect = 'auto';
+            document.removeEventListener('mousemove', handlePlayerDragMove);
+            document.removeEventListener('mouseup', handlePlayerDragEnd);
+        };
+        
+        document.body.style.userSelect = 'none';
+        document.addEventListener('mousemove', handlePlayerDragMove);
+        document.addEventListener('mouseup', handlePlayerDragEnd);
+    }, [position.x, position.y]);
 
     useEffect(() => {
         const checkSize = () => {
@@ -409,8 +445,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     return (
-        <div className={`p-4 bg-slate-950 rounded-lg`}>
-            <h4 className="text-lg font-semibold mb-3 text-center">Xem trước Video</h4>
+        <div 
+            onMouseDown={handlePlayerDragStart}
+            className={`p-4 bg-slate-950 rounded-lg cursor-move relative transition-shadow duration-300 ${isDragging ? 'shadow-2xl shadow-primary-500/40' : ''}`}
+            style={{
+                transform: `translate(${position.x}px, ${position.y}px)`,
+                zIndex: isDragging ? 100 : 1,
+            }}
+        >
+            <h4 className="text-lg font-semibold mb-3 text-center flex items-center justify-center gap-2">
+                <MoveIcon className="w-5 h-5 text-slate-500"/>
+                Xem trước Video
+            </h4>
             
             <div 
                 onMouseDown={(e) => handleMouseDownOnResizer(e, 'top')}
