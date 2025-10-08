@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { generateImageFromText, editImageWithPrompt } from '../services/geminiService';
 import { fileToBase64, markApiKeyAsInvalid, parseGeminiError } from '../services/utils';
@@ -25,6 +26,7 @@ export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceI
     const [viewingImage, setViewingImage] = useState<string | null>(null);
     const [editPrompt, setEditPrompt] = useState('');
     const [isEditing, setIsEditing] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
 
     const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.files) {
@@ -123,15 +125,46 @@ export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceI
         }
     };
     
-    const handleDownloadSelected = () => {
+    const handleDownloadSelected = async () => {
+        if (typeof (window as any).JSZip === 'undefined') {
+            setError('Lỗi: Thư viện nén file (JSZip) chưa được tải. Vui lòng kiểm tra kết nối mạng và làm mới trang.');
+            console.error('JSZip library is not loaded.');
+            return;
+        }
+
         const selectedImages = generatedImages.filter(img => img.isSelected && img.status === 'done');
         if (selectedImages.length === 0) {
             alert("Vui lòng chọn ít nhất một ảnh đã tạo để tải xuống.");
             return;
         }
-        alert(`Chức năng này cần thư viện JSZip để hoạt động. Trong bản demo này, vui lòng tải ảnh thủ công. Bạn đã chọn ${selectedImages.length} ảnh.`);
-        // Note: JSZip implementation would go here.
+
+        setIsDownloading(true);
+        setError(null);
+
+        try {
+            const zip = new (window as any).JSZip();
+            selectedImages.forEach((image) => {
+                zip.file(`character-${image.id}.png`, image.url, { base64: true });
+            });
+
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(zipBlob);
+            link.download = 'ai-generated-characters.zip';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+
+        } catch (err) {
+            console.error('Lỗi khi tạo file zip:', err);
+            setError('Đã xảy ra lỗi khi tạo file zip. Vui lòng thử lại.');
+        } finally {
+            setIsDownloading(false);
+        }
     };
+
 
     return (
         <div>
@@ -165,8 +198,12 @@ export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceI
                 <div className="mt-8">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-xl font-semibold">Ảnh đã tạo bằng AI</h3>
-                        <button onClick={handleDownloadSelected} className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex items-center gap-2">
-                            <DownloadIcon className="w-4 h-4" /> Tải ảnh đã chọn
+                        <button onClick={handleDownloadSelected} disabled={isDownloading} className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex items-center gap-2 disabled:bg-slate-600 disabled:cursor-not-allowed">
+                            {isDownloading ? (
+                                <><Spinner /> Đang nén...</>
+                            ) : (
+                                <><DownloadIcon className="w-4 h-4" /> Tải ảnh đã chọn</>
+                            )}
                         </button>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
