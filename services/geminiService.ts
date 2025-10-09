@@ -9,7 +9,7 @@ const getAiClient = (apiKey: string): GoogleGenAI => {
     return new GoogleGenAI({ apiKey });
 };
 
-export const generateImageFromText = async (apiKey: string, prompt: string): Promise<string> => {
+export const generateImageFromText = async (apiKey: string, prompt: string, aspectRatio: string = '1:1'): Promise<string> => {
     try {
         const ai = getAiClient(apiKey);
         const response = await ai.models.generateImages({
@@ -18,7 +18,7 @@ export const generateImageFromText = async (apiKey: string, prompt: string): Pro
             config: {
                 numberOfImages: 1,
                 outputMimeType: 'image/jpeg',
-                aspectRatio: '1:1',
+                aspectRatio: aspectRatio as "1:1" | "3:4" | "4:3" | "9:16" | "16:9",
             },
         });
 

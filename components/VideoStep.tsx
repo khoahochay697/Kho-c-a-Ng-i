@@ -1,8 +1,7 @@
-
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import type { Scene } from '../types';
+import type { Scene, SceneOverlay } from '../types';
 import type { VideoConfig } from '../App';
-import { UploadIcon, PlayIcon, DownloadIcon, EditIcon, PauseIcon, RewindIcon, MagicIcon, MoveIcon } from './icons';
+import { UploadIcon, PlayIcon, DownloadIcon, EditIcon, PauseIcon, RewindIcon, MagicIcon, MoveIcon, TrashIcon } from './icons';
 
 interface ImageTimelineEntry {
     url: string;
@@ -138,6 +137,70 @@ const SceneAudioPreviewer: React.FC<SceneAudioPreviewerProps> = ({ scene, onUpda
     );
 };
 
+const SceneOverlayEditor: React.FC<{ scene: Scene; onUpdate: (updates: Partial<Scene>) => void; }> = ({ scene, onUpdate }) => {
+    const handleOverlayFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            const url = URL.createObjectURL(file);
+            const type = file.type.startsWith('video') ? 'video' : 'image';
+            onUpdate({
+                overlay: {
+                    file,
+                    url,
+                    type,
+                    volume: 0.7,
+                    x: 10, y: 10, // Default position
+                    width: 30, height: 30, // Default size
+                }
+            });
+        }
+    };
+    
+    const handleRemoveOverlay = () => {
+        if(scene.overlay?.url) URL.revokeObjectURL(scene.overlay.url);
+        onUpdate({ overlay: undefined });
+    };
+    
+    const handleOverlayVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if(scene.overlay) {
+            const newVolume = parseFloat(e.target.value);
+            onUpdate({ overlay: { ...scene.overlay, volume: newVolume } });
+        }
+    };
+
+    return (
+         <div className="mt-4 pt-3 border-t border-slate-700/50">
+            <h5 className="text-sm font-semibold text-slate-300 mb-2">Lớp phủ (Overlay)</h5>
+            <input type="file" accept="image/*,video/*" onChange={handleOverlayFileChange} id={`overlay-upload-${scene.id}`} className="hidden" />
+            {!scene.overlay?.url ? (
+                <label htmlFor={`overlay-upload-${scene.id}`} className="w-full text-center cursor-pointer flex items-center justify-center gap-2 bg-slate-700/50 hover:bg-slate-700 text-white text-xs font-bold py-2 px-2 rounded-lg">
+                    <UploadIcon className="w-4 h-4" /> Tải lên ảnh/video
+                </label>
+            ) : (
+                <div className="space-y-3">
+                    <div className="flex items-start gap-2">
+                        {scene.overlay.type === 'image' ? (
+                            <img src={scene.overlay.url} className="w-12 h-12 object-cover rounded bg-slate-900 flex-shrink-0" alt="Overlay preview"/>
+                        ) : (
+                            <video src={scene.overlay.url} className="w-12 h-12 object-cover rounded bg-slate-900 flex-shrink-0" muted loop playsInline autoPlay/>
+                        )}
+                        <div className="flex-grow min-w-0">
+                            <p className="text-xs text-slate-400 truncate">{scene.overlay.file?.name}</p>
+                            <button onClick={handleRemoveOverlay} className="text-xs text-red-400 hover:underline">Xóa</button>
+                        </div>
+                    </div>
+                     {scene.overlay.type === 'video' && (
+                         <div>
+                            <label className="text-xs text-slate-400">Âm lượng lớp phủ: {Math.round(scene.overlay.volume * 100)}%</label>
+                            <input type="range" min="0" max="1" step="0.01" value={scene.overlay.volume} onChange={handleOverlayVolumeChange} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer mt-1" />
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
 
 interface VideoPlayerProps {
     scenes: Scene[];
@@ -146,6 +209,7 @@ interface VideoPlayerProps {
     trimEnd: number | null;
     playbackRate: number;
     audioVolume: number;
+    onOverlayChange: (sceneId: string, overlay: SceneOverlay) => void;
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -155,6 +219,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     trimEnd, 
     playbackRate,
     audioVolume, 
+    onOverlayChange
 }) => {
     const [playbackState, setPlaybackState] = useState<'paused' | 'playing'>('paused');
     const [imageBuffer, setImageBuffer] = useState<[string | null, string | null]>([null, null]);
@@ -164,39 +229,46 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     
     const audioRef = useRef<HTMLAudioElement>(null);
     const backgroundMusicAudioRef = useRef<HTMLAudioElement>(null);
+    const overlayVideoRef = useRef<HTMLVideoElement>(null);
     const lastPlayedMusicUrl = useRef<string | null>(null);
     const intervalRef = useRef<number | null>(null);
     
     const videoPreviewContainerRef = useRef<HTMLDivElement>(null);
-    const isResizingRef = useRef<false | 'top' | 'bottom'>(false);
-    const [previewHeight, setPreviewHeight] = useState<number | null>(null);
-
+    
     const [position, setPosition] = useState({ x: 0, y: 0 });
-    const [isDragging, setIsDragging] = useState(false);
-    const dragOffset = useRef({ x: 0, y: 0 });
+    const [isDraggingPlayer, setIsDraggingPlayer] = useState(false);
+    const dragPlayerOffset = useRef({ x: 0, y: 0 });
+    
+    const interactionRef = useRef<{
+        type: 'drag' | 'resize';
+        handle: string;
+        startX: number;
+        startY: number;
+        startRect: { x: number; y: number; width: number; height: number; };
+    } | null>(null);
 
     const handlePlayerDragStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         const target = e.target as HTMLElement;
-        if (target.closest('button, input, select, a, .cursor-ns-resize, .cursor-pointer')) {
+        if (target.closest('button, input, select, a, .resize-handle, .overlay-interactive')) {
             return;
         }
         e.preventDefault();
-        setIsDragging(true);
+        setIsDraggingPlayer(true);
 
-        dragOffset.current = {
+        dragPlayerOffset.current = {
             x: e.clientX - position.x,
             y: e.clientY - position.y,
         };
 
         const handlePlayerDragMove = (moveEvent: MouseEvent) => {
             setPosition({
-                x: moveEvent.clientX - dragOffset.current.x,
-                y: moveEvent.clientY - dragOffset.current.y,
+                x: moveEvent.clientX - dragPlayerOffset.current.x,
+                y: moveEvent.clientY - dragPlayerOffset.current.y,
             });
         };
 
         const handlePlayerDragEnd = () => {
-            setIsDragging(false);
+            setIsDraggingPlayer(false);
             document.body.style.userSelect = 'auto';
             document.removeEventListener('mousemove', handlePlayerDragMove);
             document.removeEventListener('mouseup', handlePlayerDragEnd);
@@ -207,57 +279,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         document.addEventListener('mouseup', handlePlayerDragEnd);
     }, [position.x, position.y]);
 
-    useEffect(() => {
-        const checkSize = () => {
-             if (videoPreviewContainerRef.current && previewHeight === null) {
-                const width = videoPreviewContainerRef.current.offsetWidth;
-                if (width > 0) {
-                    setPreviewHeight(width * 9 / 16);
-                }
-            }
-        };
-        checkSize();
-        // Also listen to window resize to handle responsive changes
-        window.addEventListener('resize', checkSize);
-        return () => window.removeEventListener('resize', checkSize);
-    }, [previewHeight]);
-
-    const handleMouseDownOnResizer = useCallback((e: React.MouseEvent, position: 'top' | 'bottom') => {
-        e.preventDefault();
-        isResizingRef.current = position;
-        document.body.style.cursor = 'ns-resize';
-        document.body.style.userSelect = 'none';
-
-        const startY = e.clientY;
-        const startHeight = videoPreviewContainerRef.current?.offsetHeight ?? 0;
-
-        const handleMouseMove = (moveEvent: MouseEvent) => {
-            if (!isResizingRef.current || !videoPreviewContainerRef.current) return;
-
-            const dy = moveEvent.clientY - startY;
-            let newHeight;
-            if (isResizingRef.current === 'top') {
-                newHeight = startHeight - dy;
-            } else { // 'bottom'
-                newHeight = startHeight + dy;
-            }
-
-            if (newHeight > 150 && newHeight < 1000) { // Set some constraints
-                setPreviewHeight(newHeight);
-            }
-        };
-
-        const handleMouseUp = () => {
-            isResizingRef.current = false;
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
-            document.body.style.cursor = 'default';
-            document.body.style.userSelect = 'auto';
-        };
-
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
-    }, []);
 
     const { imageTimeline, sceneStartTimes, totalDuration } = useMemo(() => {
         const timeline: ImageTimelineEntry[] = [];
@@ -279,6 +300,70 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         });
         return { imageTimeline: timeline, sceneStartTimes: startTimes, totalDuration: cumulativeTime };
     }, [scenes]);
+    
+    const currentScene = scenes[currentSceneIndex];
+
+    const handleOverlayInteractionStart = (e: React.MouseEvent, type: 'drag' | 'resize', handle = 'drag') => {
+        if (!currentScene?.overlay || !videoPreviewContainerRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const containerRect = videoPreviewContainerRef.current.getBoundingClientRect();
+        
+        interactionRef.current = {
+            type,
+            handle,
+            startX: e.clientX,
+            startY: e.clientY,
+            startRect: {
+                x: (currentScene.overlay.x / 100) * containerRect.width,
+                y: (currentScene.overlay.y / 100) * containerRect.height,
+                width: (currentScene.overlay.width / 100) * containerRect.width,
+                height: (currentScene.overlay.height / 100) * containerRect.height,
+            }
+        };
+
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+            if (!interactionRef.current || !currentScene?.overlay || !videoPreviewContainerRef.current) return;
+            
+            const dx = moveEvent.clientX - interactionRef.current.startX;
+            const dy = moveEvent.clientY - interactionRef.current.startY;
+            const { startRect } = interactionRef.current;
+            let newRect = { ...startRect };
+
+            if (interactionRef.current.type === 'drag') {
+                newRect.x += dx;
+                newRect.y += dy;
+            } else { // resize
+                if (handle.includes('right')) newRect.width += dx;
+                if (handle.includes('bottom')) newRect.height += dy;
+                if (handle.includes('left')) { newRect.width -= dx; newRect.x += dx; }
+                if (handle.includes('top')) { newRect.height -= dy; newRect.y += dy; }
+            }
+            
+            // Clamp dimensions
+            if (newRect.width < 20) newRect.width = 20;
+            if (newRect.height < 20) newRect.height = 20;
+
+            const containerRect = videoPreviewContainerRef.current.getBoundingClientRect();
+            onOverlayChange(currentScene.id, {
+                ...currentScene.overlay,
+                x: (newRect.x / containerRect.width) * 100,
+                y: (newRect.y / containerRect.height) * 100,
+                width: (newRect.width / containerRect.width) * 100,
+                height: (newRect.height / containerRect.height) * 100,
+            });
+        };
+        
+        const handleMouseUp = () => {
+            interactionRef.current = null;
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+    };
 
     const cleanup = () => {
         if (intervalRef.current) {
@@ -301,21 +386,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, [imageTimeline, trimStart]);
 
     useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.playbackRate = playbackRate;
-        }
+        if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+        if (backgroundMusicAudioRef.current) backgroundMusicAudioRef.current.playbackRate = playbackRate;
+        if (overlayVideoRef.current) overlayVideoRef.current.playbackRate = playbackRate;
     }, [playbackRate]);
     
     useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.volume = audioVolume;
-        }
+        if (audioRef.current) audioRef.current.volume = audioVolume;
     }, [audioVolume]);
 
     useEffect(() => {
         const bgAudio = backgroundMusicAudioRef.current;
         if (!bgAudio) return;
-        const currentScene = scenes[currentSceneIndex];
         if (!currentScene) return;
 
         const musicUrl = currentScene.backgroundMusicUrl || null;
@@ -348,7 +430,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (!bgAudio) return;
 
         const handleTimeUpdate = () => {
-            const currentScene = scenes[currentSceneIndex];
             if (!currentScene || !currentScene.backgroundMusicUrl) return;
 
             const trimStart = currentScene.backgroundMusicTrimStart ?? 0;
@@ -380,6 +461,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     setPlaybackState('paused');
                     if(audioRef.current) audioRef.current.currentTime = trimStart;
                     if(backgroundMusicAudioRef.current) backgroundMusicAudioRef.current.pause();
+                    if(overlayVideoRef.current) overlayVideoRef.current.pause();
                     setCurrentTime(trimStart);
                     const firstImageUrl = imageTimeline[0]?.url || null;
                     setImageBuffer([firstImageUrl, imageBuffer[1]]);
@@ -401,20 +483,37 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     const nextStartTime = sceneStartTimes[index + 1] ?? totalDuration;
                     return videoTime >= startTime && videoTime < nextStartTime;
                 });
-                if (sceneIdx !== -1) setCurrentSceneIndex(sceneIdx);
+                if (sceneIdx !== -1) {
+                    setCurrentSceneIndex(sceneIdx);
+                     const overlayVideo = overlayVideoRef.current;
+                     if(overlayVideo) {
+                        const sceneStartTime = sceneStartTimes[sceneIdx] ?? 0;
+                        overlayVideo.currentTime = videoTime - sceneStartTime;
+                     }
+                }
 
             }, 100);
         } else if (playbackState === 'paused' && audioRef.current) {
             audioRef.current.pause();
-            if (backgroundMusicAudioRef.current) {
-                backgroundMusicAudioRef.current.pause();
-            }
+            if (backgroundMusicAudioRef.current) backgroundMusicAudioRef.current.pause();
+            if (overlayVideoRef.current) overlayVideoRef.current.pause();
             cleanup();
         }
         
         return cleanup;
     }, [playbackState, trimStart, trimEnd, totalDuration, imageTimeline, sceneStartTimes, activeBufferIndex, imageBuffer]);
+    
+    useEffect(() => {
+        const overlayVideo = overlayVideoRef.current;
+        if (!overlayVideo || !currentScene) return;
 
+        if (playbackState === 'playing' && currentScene.overlay?.type === 'video') {
+            if(overlayVideo.paused) overlayVideo.play().catch(console.error);
+            overlayVideo.volume = currentScene.overlay.volume;
+        } else {
+            if(!overlayVideo.paused) overlayVideo.pause();
+        }
+    }, [playbackState, currentScene, currentSceneIndex]);
 
     const handlePlayPause = () => {
         if (!audioRef.current || !audioUrl) return;
@@ -444,13 +543,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (playbackState === 'playing') audioRef.current.play().catch(console.error);
     };
 
+    const resizeHandles = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'top', 'bottom', 'left', 'right'];
+
     return (
         <div 
             onMouseDown={handlePlayerDragStart}
-            className={`p-4 bg-slate-950 rounded-lg cursor-move relative transition-shadow duration-300 ${isDragging ? 'shadow-2xl shadow-primary-500/40' : ''}`}
+            className={`p-4 bg-slate-950 rounded-lg cursor-move relative transition-shadow duration-300 ${isDraggingPlayer ? 'shadow-2xl shadow-primary-500/40' : ''}`}
             style={{
                 transform: `translate(${position.x}px, ${position.y}px)`,
-                zIndex: isDragging ? 100 : 1,
+                zIndex: 1,
             }}
         >
             <h4 className="text-lg font-semibold mb-3 text-center flex items-center justify-center gap-2">
@@ -459,34 +560,51 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </h4>
             
             <div 
-                onMouseDown={(e) => handleMouseDownOnResizer(e, 'top')}
-                className="w-full h-2.5 cursor-ns-resize flex justify-center items-center group mb-1"
-                title="Kéo để thay đổi kích thước"
-            >
-                <div className="w-12 h-1 bg-slate-600 group-hover:bg-primary-500 rounded-full transition-colors"></div>
-            </div>
-
-            <div 
                 ref={videoPreviewContainerRef}
-                style={previewHeight ? { height: `${previewHeight}px` } : {}}
-                className={`relative bg-black rounded-md flex items-center justify-center overflow-hidden ${!previewHeight ? 'aspect-video' : ''}`}
+                className={`relative bg-black rounded-md flex items-center justify-center overflow-hidden aspect-video`}
             >
                 {imageBuffer[0] && <img src={`data:image/png;base64,${imageBuffer[0]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 0 ? 'opacity-100' : 'opacity-0'}`} alt="preview-0" />}
                 {imageBuffer[1] && <img src={`data:image/png;base64,${imageBuffer[1]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 1 ? 'opacity-100' : 'opacity-0'}`} alt="preview-1" />}
                 {!imageBuffer[0] && !imageBuffer[1] && <p className="text-slate-500">Bắt đầu xem trước</p>}
+
+                {currentScene?.overlay?.url && (
+                    <div
+                        className="overlay-interactive absolute border-2 border-dashed border-primary-500/70"
+                        onMouseDown={(e) => handleOverlayInteractionStart(e, 'drag')}
+                        style={{
+                            left: `${currentScene.overlay.x}%`,
+                            top: `${currentScene.overlay.y}%`,
+                            width: `${currentScene.overlay.width}%`,
+                            height: `${currentScene.overlay.height}%`,
+                            cursor: 'move',
+                        }}
+                    >
+                        {currentScene.overlay.type === 'image' ? (
+                            <img src={currentScene.overlay.url} className="w-full h-full object-cover" alt="overlay"/>
+                        ) : (
+                            <video ref={overlayVideoRef} src={currentScene.overlay.url} className="w-full h-full object-cover" muted={playbackState !== 'playing'} playsInline/>
+                        )}
+                         {resizeHandles.map(handle => (
+                             <div 
+                                key={handle} 
+                                className={`resize-handle absolute bg-primary-500 rounded-full w-3 h-3 -m-1.5`}
+                                onMouseDown={(e) => handleOverlayInteractionStart(e, 'resize', handle)}
+                                style={{
+                                    top: handle.includes('top') ? '0%' : handle.includes('bottom') ? '100%' : '50%',
+                                    left: handle.includes('left') ? '0%' : handle.includes('right') ? '100%' : '50%',
+                                    cursor: `${handle.includes('top') ? 'n' : ''}${handle.includes('bottom') ? 's' : ''}${handle.includes('left') ? 'w' : ''}${handle.includes('right') ? 'e' : ''}-resize`,
+                                    transform: `translate(${handle.includes('left') ? '-50%' : handle.includes('right') ? '50%' : '0'}, ${handle.includes('top') ? '-50%' : handle.includes('bottom') ? '50%' : '0'})`
+                                }}
+                            />
+                        ))}
+                    </div>
+                )}
             </div>
             
-             <div 
-                onMouseDown={(e) => handleMouseDownOnResizer(e, 'bottom')}
-                className="w-full h-2.5 cursor-ns-resize flex justify-center items-center group mt-1"
-                title="Kéo để thay đổi kích thước"
-            >
-                <div className="w-12 h-1 bg-slate-600 group-hover:bg-primary-500 rounded-full transition-colors"></div>
-            </div>
-
              {audioUrl && <audio ref={audioRef} src={audioUrl} className="hidden" preload="auto" />}
              <audio ref={backgroundMusicAudioRef} className="hidden" preload="auto" />
-            <div className="flex justify-center items-center gap-4 mt-2">
+
+            <div className="flex justify-center items-center gap-4 mt-4">
                  <button onClick={handleRestart} disabled={!audioUrl} title="Tua lại" className="bg-slate-600 hover:bg-slate-500 text-white font-bold p-3 rounded-full flex items-center justify-center disabled:bg-slate-700 disabled:text-slate-500 transition-colors">
                     <RewindIcon className="w-5 h-5"/>
                 </button>
@@ -520,7 +638,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 interface VideoStepProps {
     apiKey: string | null;
     scenes: Scene[];
-    // FIX: Correctly type `setScenes` to accept a functional update.
     setScenes: React.Dispatch<React.SetStateAction<Scene[]>>;
     videoConfig: VideoConfig;
     setVideoConfig: (config: VideoConfig) => void;
@@ -612,6 +729,10 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
         setScenes(scenes.map(s => s.id === sceneId ? { ...s, ...updates } : s));
     };
 
+    const handleOverlayChange = (sceneId: string, overlay: SceneOverlay) => {
+        handleSceneUpdate(sceneId, { overlay });
+    };
+
     const handleImageDurationChange = (sceneId: string, imageId: string, durationStr: string) => {
         const newDuration = parseFloat(durationStr);
 
@@ -638,8 +759,8 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
         const totalSelectedImages = allSelectedImages.length;
         if (totalSelectedImages === 0) return;
     
-        const BASE_DURATION_PER_IMAGE = 1.0; // Giây
-        const MIN_DURATION_PER_IMAGE = 0.2; // Giây
+        const BASE_DURATION_PER_IMAGE = 1.0; 
+        const MIN_DURATION_PER_IMAGE = 0.2; 
     
         const totalBaseDuration = totalSelectedImages * BASE_DURATION_PER_IMAGE;
     
@@ -798,22 +919,36 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
         setExportProgress(0);
         setExportMessage("Khởi tạo...");
         
-        let loadedImages = 0;
-        const imageElements: { [key: string]: HTMLImageElement } = {};
-        const uniqueImageUrls = [...new Set(imageTimeline.map(img => img.url))];
-        await Promise.all(
-            uniqueImageUrls.map(url => new Promise<void>((resolve, reject) => {
-                const imageEl = new Image();
-                imageEl.src = `data:image/png;base64,${url}`;
-                imageEl.onload = () => {
-                    imageElements[url] = imageEl;
-                    loadedImages++;
-                    setExportMessage(`Đang tải trước hình ảnh... (${loadedImages}/${uniqueImageUrls.length})`);
-                    resolve();
-                };
-                imageEl.onerror = reject;
-            }))
-        );
+        const mediaElements: { [key: string]: HTMLImageElement | HTMLVideoElement } = {};
+        const uniqueOverlayUrls = scenes.map(s => s.overlay?.url).filter((url): url is string => !!url);
+        const allUrlsToLoad = [...new Set([...imageTimeline.map(img => img.url), ...uniqueOverlayUrls])];
+
+        let loadedMediaCount = 0;
+        
+        const preloadPromises = allUrlsToLoad.map(url => new Promise<void>((resolve, reject) => {
+            const isVideo = scenes.some(s => s.overlay?.url === url && s.overlay.type === 'video');
+            const element: HTMLImageElement | HTMLVideoElement = isVideo ? document.createElement('video') : new Image();
+            
+            const onMediaLoad = () => {
+                mediaElements[url] = element;
+                loadedMediaCount++;
+                setExportMessage(`Đang tải trước media... (${loadedMediaCount}/${allUrlsToLoad.length})`);
+                if (isVideo) (element as HTMLVideoElement).pause();
+                resolve();
+            };
+    
+            element.addEventListener('load', onMediaLoad);
+            element.addEventListener('loadeddata', onMediaLoad);
+            element.addEventListener('error', (e) => reject(new Error(`Failed to load media: ${url}`)));
+
+            if (isVideo) {
+                (element as HTMLVideoElement).muted = true;
+                (element as HTMLVideoElement).preload = 'auto';
+            }
+            element.src = url.startsWith('blob:') ? url : `data:image/png;base64,${url}`;
+        }));
+
+        await Promise.all(preloadPromises);
 
         setExportMessage("Chuẩn bị stream media...");
         await new Promise(res => setTimeout(res, 200));
@@ -849,9 +984,12 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 narrationSource.start(0, videoConfig.trimStart, Math.min(trimDuration / playbackRate, totalDuration));
             }
             
-            const musicPromises = scenes.map(async (scene) => {
+            const audioPromises = scenes.map(async (scene) => {
                 const sceneTiming = sceneTimings.find(t => t.id === scene.id);
-                if (scene.backgroundMusicFile && sceneTiming && sceneTiming.duration > 0) {
+                if (!sceneTiming || sceneTiming.duration <= 0) return;
+
+                // Background Music
+                if (scene.backgroundMusicFile) {
                     hasAudio = true;
                     const musicBuffer = await audioCtx.decodeAudioData(await scene.backgroundMusicFile.arrayBuffer());
                     const musicSource = audioCtx.createBufferSource();
@@ -861,11 +999,7 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                     const bgTrimEnd = scene.backgroundMusicTrimEnd ?? scene.backgroundMusicDuration ?? 0;
                     const bgTrimmedDuration = bgTrimEnd - bgTrimStart;
 
-                    if (bgTrimmedDuration > 0 && sceneTiming.duration > bgTrimmedDuration) {
-                        musicSource.loop = true;
-                        musicSource.loopStart = bgTrimStart;
-                        musicSource.loopEnd = bgTrimEnd;
-                    }
+                    if (bgTrimmedDuration > 0 && sceneTiming.duration > bgTrimmedDuration) musicSource.loop = true;
                     
                     const musicGainNode = audioCtx.createGain();
                     musicGainNode.gain.value = scene.backgroundMusicVolume ?? 0.2;
@@ -873,8 +1007,19 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                     musicSource.connect(musicGainNode).connect(mediaDest);
                     musicSource.start(sceneTiming.startTime, bgTrimStart, sceneTiming.duration);
                 }
+                // Overlay Video Audio
+                if (scene.overlay?.type === 'video' && scene.overlay.file) {
+                    hasAudio = true;
+                    const overlayBuffer = await audioCtx.decodeAudioData(await scene.overlay.file.arrayBuffer());
+                    const overlaySource = audioCtx.createBufferSource();
+                    overlaySource.buffer = overlayBuffer;
+                    const overlayGain = audioCtx.createGain();
+                    overlayGain.gain.value = scene.overlay.volume;
+                    overlaySource.connect(overlayGain).connect(mediaDest);
+                    overlaySource.start(sceneTiming.startTime, 0, sceneTiming.duration);
+                }
             });
-            await Promise.all(musicPromises);
+            await Promise.all(audioPromises);
 
 
             if (hasAudio) {
@@ -885,13 +1030,8 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
             }
 
             const getSupportedMimeType = () => {
-                // Theo yêu cầu, đổi định dạng xuất sang WebM để khắc phục lỗi không có âm thanh trên file MP4.
-                // WebM được hỗ trợ tốt hơn cho MediaRecorder trên các trình duyệt.
                 const mimeType = 'video/webm';
-                if (MediaRecorder.isTypeSupported(mimeType)) {
-                    return { mimeType };
-                }
-                // Rất hiếm khi trình duyệt hiện đại không hỗ trợ webm, nhưng nếu có thì báo lỗi.
+                if (MediaRecorder.isTypeSupported(mimeType)) return { mimeType };
                 throw new Error("Trình duyệt của bạn không hỗ trợ ghi video định dạng WebM.");
             };
             const { mimeType } = getSupportedMimeType();
@@ -914,7 +1054,6 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
             
             const startTime = performance.now();
             const totalFrames = Math.round(totalDuration * 30);
-            const transitionDuration = 0.5;
 
             const drawFrame = () => {
                 const elapsedTime = (performance.now() - startTime) / 1000;
@@ -929,35 +1068,48 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 ctx.fillStyle = 'black';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                const drawImage = (imgEl: HTMLImageElement) => {
-                    const hRatio = canvas.width / imgEl.width, vRatio = canvas.height / imgEl.height, ratio = Math.min(hRatio, vRatio);
-                    const centerShift_x = (canvas.width - imgEl.width * ratio) / 2, centerShift_y = (canvas.height - imgEl.height * ratio) / 2;
-                    ctx.drawImage(imgEl, 0, 0, imgEl.width, imgEl.height, centerShift_x, centerShift_y, imgEl.width * ratio, imgEl.height * ratio);
+                const drawCenteredImage = (imgEl: CanvasImageSource) => {
+                    // FIX: Property 'width' does not exist on type 'VideoFrame'.
+                    // Handle all possible types in CanvasImageSource to get their dimensions correctly.
+                    const elWidth = 'videoWidth' in imgEl
+                        ? imgEl.videoWidth
+                        : ('displayWidth' in imgEl ? imgEl.displayWidth : imgEl.width);
+                    const elHeight = 'videoHeight' in imgEl
+                        ? imgEl.videoHeight
+                        : ('displayHeight' in imgEl ? imgEl.displayHeight : imgEl.height);
+
+                    const hRatio = canvas.width / elWidth;
+                    const vRatio = canvas.height / elHeight;
+                    const ratio = Math.min(hRatio, vRatio);
+                    const centerShift_x = (canvas.width - elWidth * ratio) / 2;
+                    const centerShift_y = (canvas.height - elHeight * ratio) / 2;
+                    ctx.drawImage(imgEl, 0, 0, elWidth, elHeight, centerShift_x, centerShift_y, elWidth * ratio, elHeight * ratio);
                 };
                 
                 let currentSegmentIndex = imageTimeline.findIndex(img => elapsedTime >= img.startTime && elapsedTime < img.endTime);
                 if (currentSegmentIndex === -1 && elapsedTime < totalDuration) currentSegmentIndex = imageTimeline.length - 1;
 
-                const currentSegment = imageTimeline[currentSegmentIndex], nextSegment = imageTimeline[currentSegmentIndex + 1], currentImageEl = currentSegment ? imageElements[currentSegment.url] : null;
+                const currentSegment = imageTimeline[currentSegmentIndex];
+                const currentImageEl = currentSegment ? mediaElements[currentSegment.url] as HTMLImageElement : null;
 
                 if (currentSegment && currentImageEl) {
-                    const timeUntilEnd = currentSegment.endTime - elapsedTime;
-                    
-                    if (nextSegment && timeUntilEnd < transitionDuration) {
-                        const nextImageEl = imageElements[nextSegment.url];
-                        const fadeProgress = Math.max(0, Math.min(1, 1 - (timeUntilEnd / transitionDuration)));
-
-                        ctx.globalAlpha = 1 - fadeProgress;
-                        drawImage(currentImageEl);
-
-                        if (nextImageEl) {
-                            ctx.globalAlpha = fadeProgress;
-                            drawImage(nextImageEl);
+                   drawCenteredImage(currentImageEl);
+                }
+                
+                const currentSceneTiming = sceneTimings.find(t => elapsedTime >= t.startTime && elapsedTime < t.startTime + t.duration);
+                const currentScene = scenes.find(s => s.id === currentSceneTiming?.id);
+                if (currentScene?.overlay?.url) {
+                    const overlayEl = mediaElements[currentScene.overlay.url];
+                    if (overlayEl) {
+                        if (currentScene.overlay.type === 'video') {
+                            const sceneElapsedTime = elapsedTime - (currentSceneTiming?.startTime || 0);
+                            (overlayEl as HTMLVideoElement).currentTime = sceneElapsedTime;
                         }
-                        
-                        ctx.globalAlpha = 1.0;
-                    } else {
-                        drawImage(currentImageEl);
+                        const ovX = (currentScene.overlay.x / 100) * canvas.width;
+                        const ovY = (currentScene.overlay.y / 100) * canvas.height;
+                        const ovW = (currentScene.overlay.width / 100) * canvas.width;
+                        const ovH = (currentScene.overlay.height / 100) * canvas.height;
+                        ctx.drawImage(overlayEl, ovX, ovY, ovW, ovH);
                     }
                 }
                 
@@ -1137,6 +1289,7 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                                           )}
                                        </div>
                                        <SceneAudioPreviewer scene={scene} onUpdate={(updates) => handleSceneUpdate(scene.id, updates)} />
+                                       <SceneOverlayEditor scene={scene} onUpdate={(updates) => handleSceneUpdate(scene.id, updates)} />
                                    </div>
                                ))}
                             </div>
@@ -1159,6 +1312,7 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                             trimEnd={videoConfig.trimEnd} 
                             playbackRate={playbackRate}
                             audioVolume={videoConfig.audioVolume}
+                            onOverlayChange={handleOverlayChange}
                          />
                         <div className="text-center mt-6">
                             <button onClick={handleCreateVideo} disabled={!canCreateVideo} className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-10 rounded-lg text-xl transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed">

@@ -3,12 +3,10 @@
 import React, { useState, useRef } from 'react';
 import type { Scene, ComicImage } from '../types';
 import { splitStoryIntoScenes, generateSceneImage, editImageWithPrompt } from '../services/geminiService';
-import { fileToBase64, markApiKeyAsInvalid, parseGeminiError } from '../services/utils';
+import { fileToBase64, markApiKeyAsInvalid, parseGeminiError, cropImageToBase64 } from '../services/utils';
 import { Spinner } from './Spinner';
 import { Modal } from './Modal';
-import { NextIcon, MagicIcon, UploadIcon, EditIcon, TrashIcon, RetryIcon, ZoomInIcon } from './icons';
-// Note: JSZip would be required for the download all functionality.
-// import JSZip from 'jszip'; 
+import { NextIcon, MagicIcon, UploadIcon, EditIcon, TrashIcon, RetryIcon, ZoomInIcon, DownloadIcon } from './icons';
 
 interface SceneStepProps {
     apiKey: string | null;
@@ -21,8 +19,10 @@ interface SceneStepProps {
 export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, scenes, setScenes, onNext }) => {
     const [storyText, setStoryText] = useState('');
     const [numScenes, setNumScenes] = useState('');
+    const [aspectRatio, setAspectRatio] = useState('16:9');
     const [isSplitting, setIsSplitting] = useState(false);
     const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [editingImage, setEditingImage] = useState<{sceneId: string, image: ComicImage} | null>(null);
     const [viewingImage, setViewingImage] = useState<string | null>(null);
@@ -92,8 +92,9 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
         }
         try {
             const prompt = `Tạo một khung truyện tranh với nhân vật từ ảnh tham chiếu. Bối cảnh: ${scene.description}. Giữ nguyên phong cách và ngoại hình nhân vật.`;
-            const newImageBase64 = await generateSceneImage(apiKey, referenceImages, prompt);
-            updateImageStatus(scene.id, image.id, 'done', newImageBase64);
+            const rawImageBase64 = await generateSceneImage(apiKey, referenceImages, prompt);
+            const finalImageBase64 = await cropImageToBase64(rawImageBase64, aspectRatio);
+            updateImageStatus(scene.id, image.id, 'done', finalImageBase64);
         } catch (err: unknown) {
             const friendlyError = parseGeminiError(err);
              if (apiKey && friendlyError.toLowerCase().includes('api key')) {
@@ -235,8 +236,53 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
         }
     };
     
-    const handleDownloadAll = () => {
-        alert("Chức năng này cần thư viện JSZip để hoạt động. Trong bản demo này, vui lòng tải ảnh thủ công.");
+    const handleDownloadAll = async () => {
+        if (typeof (window as any).JSZip === 'undefined') {
+            setError('Lỗi: Thư viện nén file (JSZip) chưa được tải. Vui lòng kiểm tra kết nối mạng và làm mới trang.');
+            console.error('JSZip library is not loaded.');
+            return;
+        }
+
+        const selectedImages = scenes.flatMap((scene, sceneIndex) =>
+            scene.images
+                .filter(img => img.isSelected && img.status === 'done')
+                .map((img, imgIndex) => ({
+                    ...img,
+                    sceneIndex: sceneIndex + 1,
+                    imgIndex: imgIndex + 1,
+                }))
+        );
+
+        if (selectedImages.length === 0) {
+            alert("Vui lòng chọn ít nhất một ảnh để tải xuống.");
+            return;
+        }
+
+        setIsDownloading(true);
+        setError(null);
+
+        try {
+            const zip = new (window as any).JSZip();
+            selectedImages.forEach((image) => {
+                zip.file(`scene-${image.sceneIndex}-image-${image.imgIndex}.png`, image.url, { base64: true });
+            });
+
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(zipBlob);
+            link.download = 'ai-comic-scenes.zip';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+
+        } catch (err) {
+            console.error('Lỗi khi tạo file zip:', err);
+            setError('Đã xảy ra lỗi khi tạo file zip. Vui lòng thử lại.');
+        } finally {
+            setIsDownloading(false);
+        }
     };
 
     const allScenesHaveAtLeastOneImage = scenes.length > 0 && scenes.every(s => s.images.some(i => i.status === 'done'));
@@ -263,13 +309,37 @@ export const SceneStep: React.FC<SceneStepProps> = ({ apiKey, referenceImages, s
                 <div>
                      <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
                         <h3 className="text-xl font-semibold">Danh sách cảnh</h3>
-                        <div className="flex gap-2">
-                             <button onClick={handleDownloadAll} className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Tải ảnh đã chọn</button>
-                             <button onClick={handleBatchGenerate} disabled={isBatchGenerating || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:bg-slate-600">
-                                {isBatchGenerating ? <><Spinner /> Đang tạo...</> : <><MagicIcon className="w-4 h-4" /> Bắt đầu tạo tất cả ảnh</>}
-                            </button>
-                        </div>
+                        <button onClick={handleDownloadAll} disabled={isDownloading} className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex items-center gap-2 disabled:bg-slate-600 disabled:cursor-not-allowed">
+                           {isDownloading ? (
+                               <><Spinner /> Đang nén...</>
+                           ) : (
+                               <><DownloadIcon className="w-4 h-4" /> Tải ảnh đã chọn</>
+                           )}
+                       </button>
                     </div>
+
+                    <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div className="flex items-center flex-wrap gap-2">
+                            <span className="text-slate-300 font-semibold self-center mr-2">Tỉ lệ khung hình khi tạo:</span>
+                            {['16:9', '9:16', '1:1', '4:5'].map(ratio => (
+                                <label key={ratio} className={`px-3 py-1 text-sm rounded-full cursor-pointer transition-colors ${aspectRatio === ratio ? 'bg-primary-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                                    <input
+                                        type="radio"
+                                        name="sceneAspectRatio"
+                                        value={ratio}
+                                        checked={aspectRatio === ratio}
+                                        onChange={(e) => setAspectRatio(e.target.value)}
+                                        className="hidden"
+                                    />
+                                    {ratio}
+                                </label>
+                            ))}
+                        </div>
+                        <button onClick={handleBatchGenerate} disabled={isBatchGenerating || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2 disabled:bg-slate-600 shrink-0">
+                           {isBatchGenerating ? <><Spinner /> Đang tạo...</> : <><MagicIcon className="w-4 h-4" /> Bắt đầu tạo tất cả ảnh</>}
+                       </button>
+                    </div>
+
                     <div className="space-y-6">
                         {scenes.map((scene, index) => (
                             <div key={scene.id} className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">

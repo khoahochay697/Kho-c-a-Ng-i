@@ -17,6 +17,7 @@ interface CharacterStepProps {
 
 export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceImages, setReferenceImages, onNext }) => {
     const [characterPrompt, setCharacterPrompt] = useState('');
+    const [aspectRatio, setAspectRatio] = useState('1:1');
     const [generatedImages, setGeneratedImages] = useState<ComicImage[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -59,7 +60,14 @@ export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceI
         setGeneratedImages(prev => [...prev, newImagePlaceholder]);
 
         try {
-            const imageBytes = await generateImageFromText(apiKey, `A full-body character reference sheet for a comic book character. Description: ${characterPrompt}. Style: clean lines, simple colors, white background.`);
+            const apiAspectRatioMapping: { [key: string]: string } = {
+                '1:1': '1:1',
+                '16:9': '16:9',
+                '9:16': '9:16',
+                '4:5': '3:4' 
+            };
+            const apiAspectRatio = apiAspectRatioMapping[aspectRatio] || '1:1';
+            const imageBytes = await generateImageFromText(apiKey, `A full-body character reference sheet for a comic book character. Description: ${characterPrompt}. Style: clean lines, simple colors, white background.`, apiAspectRatio);
             setGeneratedImages(prev => prev.map(img => 
                 img.id === newImagePlaceholder.id ? { ...img, url: imageBytes, status: 'done' } : img
             ));
@@ -188,6 +196,22 @@ export const CharacterStep: React.FC<CharacterStepProps> = ({ apiKey, referenceI
                 <div className="bg-slate-900/50 p-6 rounded-lg border border-slate-700">
                     <h3 className="text-xl font-semibold mb-4 text-center">Tạo nhân vật bằng AI</h3>
                     <textarea value={characterPrompt} onChange={e => setCharacterPrompt(e.target.value)} placeholder="Mô tả nhân vật (vd: chàng trai tóc xanh, mặc áo khoác phi công, mắt màu hổ phách...)" rows={3} className="w-full p-2 bg-slate-800 border border-slate-600 rounded-md focus:ring-primary-500 focus:border-primary-500 mb-4"></textarea>
+                     <div className="flex justify-center items-center flex-wrap gap-2 mb-4">
+                        <span className="text-slate-400 text-sm self-center mr-2">Tỉ lệ khung hình:</span>
+                        {['1:1', '16:9', '9:16', '4:5'].map(ratio => (
+                            <label key={ratio} className={`px-3 py-1 text-sm rounded-full cursor-pointer transition-colors ${aspectRatio === ratio ? 'bg-primary-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                                <input
+                                    type="radio"
+                                    name="aspectRatio"
+                                    value={ratio}
+                                    checked={aspectRatio === ratio}
+                                    onChange={(e) => setAspectRatio(e.target.value)}
+                                    className="hidden"
+                                />
+                                {ratio}
+                            </label>
+                        ))}
+                    </div>
                     <button onClick={handleGenerateClick} disabled={isLoading || !apiKey} className="w-full bg-primary-600 hover:bg-primary-700 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 disabled:bg-slate-600 disabled:cursor-not-allowed">
                         {isLoading ? <><Spinner /> Đang tạo...</> : <><MagicIcon className="w-5 h-5" /> Tạo nhân vật</>}
                     </button>

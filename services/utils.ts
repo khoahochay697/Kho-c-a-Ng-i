@@ -13,6 +13,63 @@ export const fileToBase64 = (file: File): Promise<string> => {
     });
 };
 
+export const cropImageToBase64 = (base64: string, aspect: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const sourceWidth = img.width;
+            const sourceHeight = img.height;
+
+            const aspectParts = aspect.split(':').map(Number);
+            if (aspectParts.length !== 2 || isNaN(aspectParts[0]) || isNaN(aspectParts[1])) {
+                return reject(new Error('Invalid aspect ratio format. Use "width:height".'));
+            }
+            const targetAspect = aspectParts[0] / aspectParts[1];
+            const sourceAspect = sourceWidth / sourceHeight;
+
+            let sourceX = 0, sourceY = 0, sourceWidthForDraw = sourceWidth, sourceHeightForDraw = sourceHeight;
+
+            // Determine cropping parameters
+            if (sourceAspect > targetAspect) { // Source image is wider than target, crop sides
+                sourceWidthForDraw = sourceHeight * targetAspect;
+                sourceX = (sourceWidth - sourceWidthForDraw) / 2;
+            } else if (sourceAspect < targetAspect) { // Source image is taller than target, crop top/bottom
+                sourceHeightForDraw = sourceWidth / targetAspect;
+                sourceY = (sourceHeight - sourceHeightForDraw) / 2;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = sourceWidthForDraw;
+            canvas.height = sourceHeightForDraw;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                return reject(new Error('Could not get canvas context'));
+            }
+
+            ctx.drawImage(
+                img,
+                sourceX,
+                sourceY,
+                sourceWidthForDraw,
+                sourceHeightForDraw,
+                0,
+                0,
+                sourceWidthForDraw,
+                sourceHeightForDraw
+            );
+            
+            const dataUrl = canvas.toDataURL('image/png');
+            // Return only the base64 part
+            resolve(dataUrl.split(',')[1]);
+        };
+        img.onerror = (err) => {
+            reject(new Error(`Image load failed: ${err}`));
+        };
+        img.src = `data:image/png;base64,${base64}`;
+    });
+};
+
 export const getMimeTypeFromDataUrl = (dataUrl: string): string => {
     return dataUrl.substring(dataUrl.indexOf(':') + 1, dataUrl.indexOf(';'));
 }
