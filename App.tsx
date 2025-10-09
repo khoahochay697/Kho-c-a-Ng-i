@@ -4,7 +4,7 @@ import { CharacterStep } from './components/CharacterStep';
 import { SceneStep } from './components/SceneStep';
 import { VideoStep } from './components/VideoStep';
 import { Stepper } from './components/Stepper';
-import type { Scene } from './types';
+import type { Scene, VideoSegment } from './types';
 
 export interface VideoConfig {
     audioFile: File | null;
@@ -12,6 +12,8 @@ export interface VideoConfig {
     trimStart: number;
     trimEnd: number | null;
     audioVolume: number;
+    intro?: VideoSegment;
+    outro?: VideoSegment;
 }
 
 const App: React.FC = () => {
@@ -25,6 +27,8 @@ const App: React.FC = () => {
         trimStart: 0,
         trimEnd: null,
         audioVolume: 1,
+        intro: undefined,
+        outro: undefined,
     });
 
     const handleKeySelection = (selectedKey: string | null) => {

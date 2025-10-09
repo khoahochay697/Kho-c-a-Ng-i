@@ -1,13 +1,16 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import type { Scene, SceneOverlay } from '../types';
+import type { Scene, SceneOverlay, VideoSegment } from '../types';
 import type { VideoConfig } from '../App';
 import { UploadIcon, PlayIcon, DownloadIcon, EditIcon, PauseIcon, RewindIcon, MagicIcon, MoveIcon, TrashIcon } from './icons';
 
-interface ImageTimelineEntry {
+interface MediaTimelineEntry {
     url: string;
     startTime: number;
     endTime: number;
+    type: 'image' | 'video';
+    isSegment?: 'intro' | 'outro';
 }
+
 
 interface SceneAudioPreviewerProps {
     scene: Scene;
@@ -204,32 +207,28 @@ const SceneOverlayEditor: React.FC<{ scene: Scene; onUpdate: (updates: Partial<S
 
 interface VideoPlayerProps {
     scenes: Scene[];
-    audioUrl: string | null;
-    trimStart: number;
-    trimEnd: number | null;
+    videoConfig: VideoConfig;
     playbackRate: number;
-    audioVolume: number;
     onOverlayChange: (sceneId: string, overlay: SceneOverlay) => void;
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
     scenes, 
-    audioUrl, 
-    trimStart, 
-    trimEnd, 
+    videoConfig,
     playbackRate,
-    audioVolume, 
     onOverlayChange
 }) => {
+    const { audioUrl, trimStart, trimEnd, audioVolume, intro, outro } = videoConfig;
     const [playbackState, setPlaybackState] = useState<'paused' | 'playing'>('paused');
     const [imageBuffer, setImageBuffer] = useState<[string | null, string | null]>([null, null]);
     const [activeBufferIndex, setActiveBufferIndex] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
-    const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
+    const [currentSceneIndex, setCurrentSceneIndex] = useState(-1); // -1 for intro, scenes.length for outro
     
     const audioRef = useRef<HTMLAudioElement>(null);
     const backgroundMusicAudioRef = useRef<HTMLAudioElement>(null);
     const overlayVideoRef = useRef<HTMLVideoElement>(null);
+    const segmentVideoRef = useRef<HTMLVideoElement>(null); // For intro/outro video playback
     const lastPlayedMusicUrl = useRef<string | null>(null);
     const intervalRef = useRef<number | null>(null);
     
@@ -280,17 +279,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, [position.x, position.y]);
 
 
-    const { imageTimeline, sceneStartTimes, totalDuration } = useMemo(() => {
-        const timeline: ImageTimelineEntry[] = [];
-        const startTimes: number[] = [];
+    const { mediaTimeline, segmentStartTimes, totalDuration, segmentMap } = useMemo(() => {
+        const timeline: MediaTimelineEntry[] = [];
+        const startTimes: {name: string, time: number}[] = [];
         let cumulativeTime = 0;
-        scenes.forEach(scene => {
-            startTimes.push(cumulativeTime);
+
+        if (intro?.url) {
+            startTimes.push({ name: 'Intro', time: cumulativeTime });
+            timeline.push({
+                url: intro.url,
+                type: intro.type,
+                startTime: cumulativeTime,
+                endTime: cumulativeTime + intro.duration,
+                isSegment: 'intro',
+            });
+            cumulativeTime += intro.duration;
+        }
+
+        scenes.forEach((scene, index) => {
+            startTimes.push({ name: `Cảnh ${index + 1}`, time: cumulativeTime });
             const selectedImages = scene.images.filter(img => img.status === 'done' && img.isSelected);
             if (selectedImages.length > 0) {
                 selectedImages.forEach(image => {
                     timeline.push({
                         url: image.url,
+                        type: 'image',
                         startTime: cumulativeTime,
                         endTime: cumulativeTime + image.duration,
                     });
@@ -298,8 +311,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 });
             }
         });
-        return { imageTimeline: timeline, sceneStartTimes: startTimes, totalDuration: cumulativeTime };
-    }, [scenes]);
+
+        if (outro?.url) {
+            startTimes.push({ name: 'Outro', time: cumulativeTime });
+            timeline.push({
+                url: outro.url,
+                type: outro.type,
+                startTime: cumulativeTime,
+                endTime: cumulativeTime + outro.duration,
+                isSegment: 'outro',
+            });
+            cumulativeTime += outro.duration;
+        }
+        
+        const map = startTimes.map((s, i) => ({...s, index: i}));
+
+        return { mediaTimeline: timeline, segmentStartTimes: startTimes.map(s=>s.time), totalDuration: cumulativeTime, segmentMap: map };
+    }, [scenes, intro, outro]);
     
     const currentScene = scenes[currentSceneIndex];
 
@@ -373,8 +401,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     useEffect(() => {
-        const firstImageUrl = imageTimeline[0]?.url || null;
-        setImageBuffer([firstImageUrl, null]);
+        const firstMediaUrl = mediaTimeline[0]?.url || null;
+        setImageBuffer([firstMediaUrl, null]);
         setActiveBufferIndex(0);
         
         if (audioRef.current) {
@@ -383,12 +411,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         setCurrentTime(trimStart);
         
         return cleanup;
-    }, [imageTimeline, trimStart]);
+    }, [mediaTimeline, trimStart]);
 
     useEffect(() => {
         if (audioRef.current) audioRef.current.playbackRate = playbackRate;
         if (backgroundMusicAudioRef.current) backgroundMusicAudioRef.current.playbackRate = playbackRate;
         if (overlayVideoRef.current) overlayVideoRef.current.playbackRate = playbackRate;
+        if (segmentVideoRef.current) segmentVideoRef.current.playbackRate = playbackRate;
     }, [playbackRate]);
     
     useEffect(() => {
@@ -398,7 +427,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     useEffect(() => {
         const bgAudio = backgroundMusicAudioRef.current;
         if (!bgAudio) return;
-        if (!currentScene) return;
+        if (!currentScene) {
+            if(!bgAudio.paused) bgAudio.pause();
+            lastPlayedMusicUrl.current = null;
+            return;
+        };
 
         const musicUrl = currentScene.backgroundMusicUrl || null;
 
@@ -462,33 +495,59 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     if(audioRef.current) audioRef.current.currentTime = trimStart;
                     if(backgroundMusicAudioRef.current) backgroundMusicAudioRef.current.pause();
                     if(overlayVideoRef.current) overlayVideoRef.current.pause();
+                    if(segmentVideoRef.current) segmentVideoRef.current.pause();
                     setCurrentTime(trimStart);
-                    const firstImageUrl = imageTimeline[0]?.url || null;
-                    setImageBuffer([firstImageUrl, imageBuffer[1]]);
+                    const firstMediaUrl = mediaTimeline[0]?.url || null;
+                    setImageBuffer([firstMediaUrl, imageBuffer[1]]);
                     setActiveBufferIndex(0);
                     cleanup();
                     return;
                 }
                 
-                const currentImageInTimeline = imageTimeline.find(img => videoTime >= img.startTime && videoTime < img.endTime);
-                if (currentImageInTimeline && currentImageInTimeline.url !== imageBuffer[activeBufferIndex]) {
+                const currentMediaInTimeline = mediaTimeline.find(img => videoTime >= img.startTime && videoTime < img.endTime);
+                
+                // Handle image buffer for smooth transitions
+                if (currentMediaInTimeline && currentMediaInTimeline.type === 'image' && currentMediaInTimeline.url !== imageBuffer[activeBufferIndex]) {
                     const nextBufferIndex = 1 - activeBufferIndex;
                     const newBuffer = [...imageBuffer] as [string | null, string | null];
-                    newBuffer[nextBufferIndex] = currentImageInTimeline.url;
+                    newBuffer[nextBufferIndex] = currentMediaInTimeline.url;
                     setImageBuffer(newBuffer);
                     setActiveBufferIndex(nextBufferIndex);
                 }
-
-                const sceneIdx = sceneStartTimes.findIndex((startTime, index) => {
-                    const nextStartTime = sceneStartTimes[index + 1] ?? totalDuration;
-                    return videoTime >= startTime && videoTime < nextStartTime;
+                
+                // Handle video segment playback
+                const segmentVideo = segmentVideoRef.current;
+                if (segmentVideo) {
+                    if (currentMediaInTimeline?.type === 'video') {
+                        if (segmentVideo.src !== currentMediaInTimeline.url) {
+                            segmentVideo.src = currentMediaInTimeline.url;
+                        }
+                        segmentVideo.currentTime = videoTime - currentMediaInTimeline.startTime;
+                        if(segmentVideo.paused) segmentVideo.play().catch(console.error);
+                    } else {
+                        if(!segmentVideo.paused) segmentVideo.pause();
+                    }
+                }
+                
+                const sceneIdx = segmentStartTimes.findIndex((startTime, index) => {
+                     const nextStartTime = segmentStartTimes[index + 1] ?? totalDuration;
+                     return videoTime >= startTime && videoTime < nextStartTime;
                 });
+                
                 if (sceneIdx !== -1) {
-                    setCurrentSceneIndex(sceneIdx);
+                    const currentSegment = segmentMap[sceneIdx];
+                    if (currentSegment) {
+                        const sceneOffset = intro?.url ? 1 : 0;
+                        if (currentSegment.name.startsWith('Cảnh')) {
+                           setCurrentSceneIndex(sceneIdx - sceneOffset);
+                        } else {
+                           setCurrentSceneIndex(-1); // Not in a scene (intro/outro)
+                        }
+                    }
                      const overlayVideo = overlayVideoRef.current;
                      if(overlayVideo) {
-                        const sceneStartTime = sceneStartTimes[sceneIdx] ?? 0;
-                        overlayVideo.currentTime = videoTime - sceneStartTime;
+                        const currentSceneStartTime = segmentStartTimes[sceneIdx] ?? 0;
+                        overlayVideo.currentTime = videoTime - currentSceneStartTime;
                      }
                 }
 
@@ -497,11 +556,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             audioRef.current.pause();
             if (backgroundMusicAudioRef.current) backgroundMusicAudioRef.current.pause();
             if (overlayVideoRef.current) overlayVideoRef.current.pause();
+            if (segmentVideoRef.current) segmentVideoRef.current.pause();
             cleanup();
         }
         
         return cleanup;
-    }, [playbackState, trimStart, trimEnd, totalDuration, imageTimeline, sceneStartTimes, activeBufferIndex, imageBuffer]);
+    }, [playbackState, trimStart, trimEnd, totalDuration, mediaTimeline, segmentStartTimes, activeBufferIndex, imageBuffer, intro]);
     
     useEffect(() => {
         const overlayVideo = overlayVideoRef.current;
@@ -530,20 +590,29 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const sceneIdx = parseInt(e.target.value, 10);
-        if (!audioRef.current || isNaN(sceneIdx)) return;
+        const segmentIndex = parseInt(e.target.value, 10);
+        if (!audioRef.current || isNaN(segmentIndex)) return;
         
-        const seekVideoTime = sceneStartTimes[sceneIdx] ?? 0;
+        const seekVideoTime = segmentStartTimes[segmentIndex] ?? 0;
         const seekAudioTime = seekVideoTime + trimStart;
 
         audioRef.current.currentTime = seekAudioTime;
         setCurrentTime(seekAudioTime);
-        setCurrentSceneIndex(sceneIdx);
+        
+        const sceneOffset = intro?.url ? 1 : 0;
+        const segment = segmentMap[segmentIndex];
+        if (segment && segment.name.startsWith('Cảnh')) {
+            setCurrentSceneIndex(segmentIndex - sceneOffset);
+        } else {
+            setCurrentSceneIndex(-1);
+        }
         
         if (playbackState === 'playing') audioRef.current.play().catch(console.error);
     };
 
     const resizeHandles = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'top', 'bottom', 'left', 'right'];
+    const currentMedia = mediaTimeline.find(m => (currentTime - trimStart) >= m.startTime && (currentTime - trimStart) < m.endTime);
+    const activeScrubberIndex = segmentMap.findIndex(s => s.time === (segmentStartTimes.find(st => (currentTime-trimStart) >= st) ?? segmentStartTimes[segmentStartTimes.length-1]));
 
     return (
         <div 
@@ -563,8 +632,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 ref={videoPreviewContainerRef}
                 className={`relative bg-black rounded-md flex items-center justify-center overflow-hidden aspect-video`}
             >
-                {imageBuffer[0] && <img src={`data:image/png;base64,${imageBuffer[0]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 0 ? 'opacity-100' : 'opacity-0'}`} alt="preview-0" />}
-                {imageBuffer[1] && <img src={`data:image/png;base64,${imageBuffer[1]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 1 ? 'opacity-100' : 'opacity-0'}`} alt="preview-1" />}
+                {imageBuffer[0] && <img src={imageBuffer[0].startsWith('blob:') ? imageBuffer[0] : `data:image/png;base64,${imageBuffer[0]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 0 ? 'opacity-100' : 'opacity-0'}`} alt="preview-0" />}
+                {imageBuffer[1] && <img src={imageBuffer[1].startsWith('blob:') ? imageBuffer[1] : `data:image/png;base64,${imageBuffer[1]}`} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${activeBufferIndex === 1 ? 'opacity-100' : 'opacity-0'}`} alt="preview-1" />}
+                
+                <video ref={segmentVideoRef} className={`w-full h-full object-contain ${currentMedia?.type === 'video' ? 'opacity-100' : 'opacity-0'}`} muted playsInline />
+
                 {!imageBuffer[0] && !imageBuffer[1] && <p className="text-slate-500">Bắt đầu xem trước</p>}
 
                 {currentScene?.overlay?.url && (
@@ -615,21 +687,124 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     {`${(Math.max(0, currentTime - trimStart)).toFixed(1)}s / ${totalDuration.toFixed(1)}s`}
                 </p>
             </div>
-            {scenes.length > 1 && (
+            {segmentMap.length > 1 && (
                 <div className="mt-4 px-2">
-                    <label htmlFor="scene-scrubber" className="text-sm text-slate-400 mb-1 block text-center">Tua đến cảnh {currentSceneIndex + 1}</label>
+                    <label htmlFor="scene-scrubber" className="text-sm text-slate-400 mb-1 block text-center">Tua đến: {segmentMap[activeScrubberIndex]?.name ?? ''}</label>
                     <input 
                         id="scene-scrubber"
                         type="range"
                         min="0"
-                        max={scenes.length - 1}
-                        value={currentSceneIndex}
+                        max={segmentMap.length - 1}
+                        value={activeScrubberIndex > -1 ? activeScrubberIndex : 0}
                         onChange={handleSeek}
                         disabled={!audioUrl}
                         className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
                     />
                 </div>
             )}
+        </div>
+    );
+};
+
+const IntroOutroEditor: React.FC<{
+    videoConfig: VideoConfig;
+    setVideoConfig: (config: VideoConfig) => void;
+}> = ({ videoConfig, setVideoConfig }) => {
+    
+    const handleFileChange = (type: 'intro' | 'outro', event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const url = URL.createObjectURL(file);
+        const mediaType = file.type.startsWith('video') ? 'video' : 'image';
+        
+        const newSegment: VideoSegment = {
+            file,
+            url,
+            type: mediaType,
+            volume: 0.7,
+            duration: mediaType === 'video' ? 0 : 5 // Default duration
+        };
+        
+        if (mediaType === 'video') {
+            const video = document.createElement('video');
+            video.onloadedmetadata = () => {
+                setVideoConfig({ ...videoConfig, [type]: { ...newSegment, duration: video.duration }});
+                URL.revokeObjectURL(video.src);
+            };
+            video.src = url;
+        } else {
+             setVideoConfig({ ...videoConfig, [type]: newSegment });
+        }
+    };
+    
+    const handleRemove = (type: 'intro' | 'outro') => {
+        const segment = videoConfig[type];
+        if (segment?.url) URL.revokeObjectURL(segment.url);
+        setVideoConfig({ ...videoConfig, [type]: undefined });
+    };
+
+    const handleUpdate = (type: 'intro' | 'outro', updates: Partial<VideoSegment>) => {
+        const segment = videoConfig[type];
+        if (segment) {
+            setVideoConfig({ ...videoConfig, [type]: { ...segment, ...updates } });
+        }
+    };
+
+    const renderEditor = (type: 'intro' | 'outro') => {
+        const segment = videoConfig[type];
+        const title = type === 'intro' ? 'Intro (Đầu video)' : 'Outro (Cuối video)';
+        
+        return (
+            <div className="bg-slate-800/50 p-4 rounded-lg">
+                <h4 className="font-semibold text-primary-400 mb-3">{title}</h4>
+                <input type="file" accept="image/*,video/*" id={`${type}-upload`} onChange={(e) => handleFileChange(type, e)} className="hidden" />
+                {!segment?.url ? (
+                    <label htmlFor={`${type}-upload`} className="w-full text-center cursor-pointer flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg">
+                        <UploadIcon className="w-5 h-5"/> Tải lên ảnh/video
+                    </label>
+                ) : (
+                    <div className="space-y-3">
+                         <div className="flex items-start gap-2">
+                            {segment.type === 'image' ? (
+                                <img src={segment.url} className="w-12 h-12 object-cover rounded bg-slate-900 flex-shrink-0" alt={`${type} preview`}/>
+                            ) : (
+                                <video src={segment.url} className="w-12 h-12 object-cover rounded bg-slate-900 flex-shrink-0" muted loop playsInline autoPlay/>
+                            )}
+                            <div className="flex-grow min-w-0">
+                                <p className="text-xs text-slate-400 truncate">{segment.file?.name}</p>
+                                <button onClick={() => handleRemove(type)} className="text-xs text-red-400 hover:underline">Xóa</button>
+                            </div>
+                        </div>
+                        <div className="text-sm">
+                            <label htmlFor={`${type}-duration`} className="text-xs text-slate-400">Thời lượng (giây)</label>
+                             <input 
+                                id={`${type}-duration`}
+                                type="number" 
+                                step="0.1" 
+                                min="0.1"
+                                value={segment.duration || ''} 
+                                onChange={e => handleUpdate(type, { duration: parseFloat(e.target.value) || 0 })} 
+                                className="w-full bg-slate-900 border border-slate-700 rounded-md p-1 mt-1"
+                                disabled={segment.type === 'video'}
+                            />
+                        </div>
+                         {segment.type === 'video' && (
+                             <div>
+                                <label className="text-xs text-slate-400">Âm lượng: {Math.round(segment.volume * 100)}%</label>
+                                <input type="range" min="0" max="1" step="0.01" value={segment.volume} onChange={e => handleUpdate(type, { volume: parseFloat(e.target.value) })} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer mt-1" />
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    return (
+        <div className="space-y-4">
+            {renderEditor('intro')}
+            {renderEditor('outro')}
         </div>
     );
 };
@@ -704,7 +879,7 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
     }, []);
 
     const speedOptions = [0.75, 0.8, 0.85, 0.9, 0.95, 1, 1.25, 1.5, 1.75, 2];
-    const canCreateVideo = scenes.flatMap(s => s.images.filter(img => img.status === 'done' && img.isSelected)).length > 0;
+    const canCreateVideo = scenes.flatMap(s => s.images.filter(img => img.status === 'done' && img.isSelected)).length > 0 || videoConfig.intro || videoConfig.outro;
 
     const handleAudioUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -888,10 +1063,19 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
         if (!canCreateVideo) return;
         const hasNarration = !!videoConfig.audioFile;
 
-        const { imageTimeline, totalDuration, sceneTimings } = (() => {
-            const timeline: ImageTimelineEntry[] = [];
+        const { mediaTimeline, totalDuration, sceneTimings, introDuration, outroDuration } = (() => {
+            const timeline: MediaTimelineEntry[] = [];
             const timings: { id: string, startTime: number, duration: number }[] = [];
             let cumulativeTime = 0;
+            let introDur = 0;
+            
+            if(videoConfig.intro?.url) {
+                const duration = videoConfig.intro.duration / playbackRate;
+                timeline.push({ url: videoConfig.intro.url, type: videoConfig.intro.type, startTime: 0, endTime: duration, isSegment: 'intro' });
+                cumulativeTime += duration;
+                introDur = duration;
+            }
+
             scenes.forEach(scene => {
                 const sceneStartTime = cumulativeTime;
                 let sceneDuration = 0;
@@ -899,18 +1083,23 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 if (selectedImages.length > 0) {
                     selectedImages.forEach(image => {
                         const durationOnPlayback = image.duration / playbackRate;
-                        timeline.push({
-                            url: image.url,
-                            startTime: cumulativeTime,
-                            endTime: cumulativeTime + durationOnPlayback,
-                        });
+                        timeline.push({ url: image.url, type: 'image', startTime: cumulativeTime, endTime: cumulativeTime + durationOnPlayback });
                         cumulativeTime += durationOnPlayback;
                         sceneDuration += durationOnPlayback;
                     });
                 }
                 timings.push({ id: scene.id, startTime: sceneStartTime, duration: sceneDuration });
             });
-            return { imageTimeline: timeline, totalDuration: cumulativeTime, sceneTimings: timings };
+            
+            let outroDur = 0;
+            if(videoConfig.outro?.url) {
+                const duration = videoConfig.outro.duration / playbackRate;
+                timeline.push({ url: videoConfig.outro.url, type: videoConfig.outro.type, startTime: cumulativeTime, endTime: cumulativeTime + duration, isSegment: 'outro' });
+                cumulativeTime += duration;
+                outroDur = duration;
+            }
+
+            return { mediaTimeline: timeline, totalDuration: cumulativeTime, sceneTimings: timings, introDuration: introDur, outroDuration: outroDur };
         })();
         
         setIsExporting(true);
@@ -920,13 +1109,13 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
         setExportMessage("Khởi tạo...");
         
         const mediaElements: { [key: string]: HTMLImageElement | HTMLVideoElement } = {};
-        const uniqueOverlayUrls = scenes.map(s => s.overlay?.url).filter((url): url is string => !!url);
-        const allUrlsToLoad = [...new Set([...imageTimeline.map(img => img.url), ...uniqueOverlayUrls])];
+        const sceneOverlayUrls = scenes.map(s => s.overlay?.url).filter((url): url is string => !!url);
+        const allUrlsToLoad = [...new Set([...mediaTimeline.map(img => img.url), ...sceneOverlayUrls])];
 
         let loadedMediaCount = 0;
         
         const preloadPromises = allUrlsToLoad.map(url => new Promise<void>((resolve, reject) => {
-            const isVideo = scenes.some(s => s.overlay?.url === url && s.overlay.type === 'video');
+            const isVideo = mediaTimeline.some(m => m.url === url && m.type === 'video') || scenes.some(s => s.overlay?.url === url && s.overlay.type === 'video');
             const element: HTMLImageElement | HTMLVideoElement = isVideo ? document.createElement('video') : new Image();
             
             const onMediaLoad = () => {
@@ -981,42 +1170,67 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 narrationGainNode.connect(mediaDest);
                 
                 const trimDuration = (videoConfig.trimEnd ?? audioDuration) - videoConfig.trimStart;
-                narrationSource.start(0, videoConfig.trimStart, Math.min(trimDuration / playbackRate, totalDuration));
+                narrationSource.start(introDuration, videoConfig.trimStart, Math.min(trimDuration / playbackRate, totalDuration - introDuration - outroDuration));
             }
             
-            const audioPromises = scenes.map(async (scene) => {
+            const audioPromises: Promise<void>[] = [];
+            
+            if(videoConfig.intro?.type === 'video' && videoConfig.intro.file) {
+                 hasAudio = true;
+                 audioPromises.push((async () => {
+                    const buffer = await audioCtx.decodeAudioData(await videoConfig.intro!.file!.arrayBuffer());
+                    const source = audioCtx.createBufferSource();
+                    source.buffer = buffer;
+                    const gain = audioCtx.createGain();
+                    gain.gain.value = videoConfig.intro!.volume;
+                    source.connect(gain).connect(mediaDest);
+                    source.start(0, 0, introDuration);
+                 })());
+            }
+            if(videoConfig.outro?.type === 'video' && videoConfig.outro.file) {
+                 hasAudio = true;
+                 audioPromises.push((async () => {
+                    const buffer = await audioCtx.decodeAudioData(await videoConfig.outro!.file!.arrayBuffer());
+                    const source = audioCtx.createBufferSource();
+                    source.buffer = buffer;
+                    const gain = audioCtx.createGain();
+                    gain.gain.value = videoConfig.outro!.volume;
+                    source.connect(gain).connect(mediaDest);
+                    source.start(totalDuration - outroDuration, 0, outroDuration);
+                 })());
+            }
+
+            scenes.forEach((scene) => {
                 const sceneTiming = sceneTimings.find(t => t.id === scene.id);
                 if (!sceneTiming || sceneTiming.duration <= 0) return;
 
-                // Background Music
                 if (scene.backgroundMusicFile) {
                     hasAudio = true;
-                    const musicBuffer = await audioCtx.decodeAudioData(await scene.backgroundMusicFile.arrayBuffer());
-                    const musicSource = audioCtx.createBufferSource();
-                    musicSource.buffer = musicBuffer;
-                    
-                    const bgTrimStart = scene.backgroundMusicTrimStart ?? 0;
-                    const bgTrimEnd = scene.backgroundMusicTrimEnd ?? scene.backgroundMusicDuration ?? 0;
-                    const bgTrimmedDuration = bgTrimEnd - bgTrimStart;
-
-                    if (bgTrimmedDuration > 0 && sceneTiming.duration > bgTrimmedDuration) musicSource.loop = true;
-                    
-                    const musicGainNode = audioCtx.createGain();
-                    musicGainNode.gain.value = scene.backgroundMusicVolume ?? 0.2;
-
-                    musicSource.connect(musicGainNode).connect(mediaDest);
-                    musicSource.start(sceneTiming.startTime, bgTrimStart, sceneTiming.duration);
+                    audioPromises.push((async () => {
+                        const musicBuffer = await audioCtx.decodeAudioData(await scene.backgroundMusicFile!.arrayBuffer());
+                        const musicSource = audioCtx.createBufferSource();
+                        musicSource.buffer = musicBuffer;
+                        const bgTrimStart = scene.backgroundMusicTrimStart ?? 0;
+                        const bgTrimEnd = scene.backgroundMusicTrimEnd ?? scene.backgroundMusicDuration ?? 0;
+                        const bgTrimmedDuration = bgTrimEnd - bgTrimStart;
+                        if (bgTrimmedDuration > 0 && sceneTiming.duration > bgTrimmedDuration) musicSource.loop = true;
+                        const musicGainNode = audioCtx.createGain();
+                        musicGainNode.gain.value = scene.backgroundMusicVolume ?? 0.2;
+                        musicSource.connect(musicGainNode).connect(mediaDest);
+                        musicSource.start(sceneTiming.startTime, bgTrimStart, sceneTiming.duration);
+                    })());
                 }
-                // Overlay Video Audio
                 if (scene.overlay?.type === 'video' && scene.overlay.file) {
                     hasAudio = true;
-                    const overlayBuffer = await audioCtx.decodeAudioData(await scene.overlay.file.arrayBuffer());
-                    const overlaySource = audioCtx.createBufferSource();
-                    overlaySource.buffer = overlayBuffer;
-                    const overlayGain = audioCtx.createGain();
-                    overlayGain.gain.value = scene.overlay.volume;
-                    overlaySource.connect(overlayGain).connect(mediaDest);
-                    overlaySource.start(sceneTiming.startTime, 0, sceneTiming.duration);
+                     audioPromises.push((async () => {
+                        const overlayBuffer = await audioCtx.decodeAudioData(await scene.overlay!.file!.arrayBuffer());
+                        const overlaySource = audioCtx.createBufferSource();
+                        overlaySource.buffer = overlayBuffer;
+                        const overlayGain = audioCtx.createGain();
+                        overlayGain.gain.value = scene.overlay.volume;
+                        overlaySource.connect(overlayGain).connect(mediaDest);
+                        overlaySource.start(sceneTiming.startTime, 0, sceneTiming.duration);
+                    })());
                 }
             });
             await Promise.all(audioPromises);
@@ -1068,15 +1282,15 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 ctx.fillStyle = 'black';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+                // FIX: Correctly get numeric width/height, handling SVGAnimatedLength for SVG image dimensions and removing non-standard properties.
                 const drawCenteredImage = (imgEl: CanvasImageSource) => {
-                    // FIX: Property 'width' does not exist on type 'VideoFrame'.
-                    // Handle all possible types in CanvasImageSource to get their dimensions correctly.
-                    const elWidth = 'videoWidth' in imgEl
-                        ? imgEl.videoWidth
-                        : ('displayWidth' in imgEl ? imgEl.displayWidth : imgEl.width);
-                    const elHeight = 'videoHeight' in imgEl
-                        ? imgEl.videoHeight
-                        : ('displayHeight' in imgEl ? imgEl.displayHeight : imgEl.height);
+                    const elWidthRaw = 'videoWidth' in imgEl ? imgEl.videoWidth : imgEl.width;
+                    const elHeightRaw = 'videoHeight' in imgEl ? imgEl.videoHeight : imgEl.height;
+
+                    const elWidth = typeof elWidthRaw === 'object' ? (elWidthRaw as any).baseVal.value : elWidthRaw;
+                    const elHeight = typeof elHeightRaw === 'object' ? (elHeightRaw as any).baseVal.value : elHeightRaw;
+                    
+                    if (!elWidth || !elHeight) return;
 
                     const hRatio = canvas.width / elWidth;
                     const vRatio = canvas.height / elHeight;
@@ -1086,14 +1300,19 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                     ctx.drawImage(imgEl, 0, 0, elWidth, elHeight, centerShift_x, centerShift_y, elWidth * ratio, elHeight * ratio);
                 };
                 
-                let currentSegmentIndex = imageTimeline.findIndex(img => elapsedTime >= img.startTime && elapsedTime < img.endTime);
-                if (currentSegmentIndex === -1 && elapsedTime < totalDuration) currentSegmentIndex = imageTimeline.length - 1;
+                let currentSegmentIndex = mediaTimeline.findIndex(img => elapsedTime >= img.startTime && elapsedTime < img.endTime);
+                if (currentSegmentIndex === -1 && elapsedTime < totalDuration) currentSegmentIndex = mediaTimeline.length - 1;
 
-                const currentSegment = imageTimeline[currentSegmentIndex];
-                const currentImageEl = currentSegment ? mediaElements[currentSegment.url] as HTMLImageElement : null;
-
-                if (currentSegment && currentImageEl) {
-                   drawCenteredImage(currentImageEl);
+                const currentSegment = mediaTimeline[currentSegmentIndex];
+                
+                if (currentSegment) {
+                   const currentMediaEl = mediaElements[currentSegment.url];
+                   if (currentMediaEl) {
+                        if (currentSegment.type === 'video') {
+                            (currentMediaEl as HTMLVideoElement).currentTime = elapsedTime - currentSegment.startTime;
+                        }
+                        drawCenteredImage(currentMediaEl);
+                   }
                 }
                 
                 const currentSceneTiming = sceneTimings.find(t => elapsedTime >= t.startTime && elapsedTime < t.startTime + t.duration);
@@ -1186,9 +1405,11 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                 <div ref={containerRef} className="flex flex-col lg:flex-row gap-4 items-stretch">
                     <div ref={leftPanelRef} className="lg:w-2/3 flex-shrink-0 space-y-6">
                         <div className="bg-slate-900/50 p-6 rounded-lg border border-slate-700">
-                            <h3 className="text-xl font-semibold mb-4">1. Âm thanh & Tốc độ</h3>
+                            <h3 className="text-xl font-semibold mb-4">1. Cấu hình Video</h3>
                             
-                            <div className="bg-slate-800/50 p-4 rounded-lg">
+                            <IntroOutroEditor videoConfig={videoConfig} setVideoConfig={setVideoConfig} />
+                            
+                            <div className="bg-slate-800/50 p-4 rounded-lg mt-4">
                                 <h4 className="font-semibold text-primary-400 mb-3">Giọng kể chính</h4>
                                 <input type="file" accept="audio/*" onChange={handleAudioUpload} id="audio-upload" className="hidden" />
                                 <label htmlFor="audio-upload" className="w-full text-center cursor-pointer flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg">
@@ -1307,11 +1528,8 @@ export const VideoStep: React.FC<VideoStepProps> = ({ apiKey, scenes, setScenes,
                     <div className="flex-grow flex flex-col min-w-0">
                         <VideoPlayer 
                             scenes={scenes} 
-                            audioUrl={videoConfig.audioUrl} 
-                            trimStart={videoConfig.trimStart} 
-                            trimEnd={videoConfig.trimEnd} 
+                            videoConfig={videoConfig}
                             playbackRate={playbackRate}
-                            audioVolume={videoConfig.audioVolume}
                             onOverlayChange={handleOverlayChange}
                          />
                         <div className="text-center mt-6">

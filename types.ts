@@ -18,6 +18,14 @@ export interface SceneOverlay {
     height: number; // percentage
 }
 
+export interface VideoSegment {
+    file: File | null;
+    url: string | null;
+    type: 'image' | 'video';
+    volume: number; // 0 to 1
+    duration: number; // in seconds
+}
+
 export interface Scene {
     id: string;
     description: string;
